@@ -6,13 +6,21 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const root = document.getElementById("root");
 
-// Le totem est stocké sans emoji ; on le retrouve à partir du nom de l'animal.
+// Le totem est stocké sans emoji, en français OU en anglais ; on retrouve l'emoji
+// à partir du nom de l'animal, dans l'une ou l'autre langue.
 const TOTEM_EMOJI = {
-  Renard:"🦊", Loutre:"🦦", Castor:"🦫", Hibou:"🦉", Blaireau:"🦡", Loup:"🐺",
-  Aigle:"🦅", Écureuil:"🐿️", Sanglier:"🐗", Hérisson:"🦔", Ours:"🐻", Cerf:"🦌",
-  Canard:"🦆", Lièvre:"🐇", Tortue:"🐢", Grenouille:"🐸", Abeille:"🐝", Fourmi:"🐜"
+  Renard:"🦊", Fox:"🦊", Loutre:"🦦", Otter:"🦦", Castor:"🦫", Beaver:"🦫",
+  Hibou:"🦉", Owl:"🦉", Blaireau:"🦡", Badger:"🦡", Loup:"🐺", Wolf:"🐺",
+  Aigle:"🦅", Eagle:"🦅", Écureuil:"🐿️", Squirrel:"🐿️", Sanglier:"🐗", Boar:"🐗",
+  Hérisson:"🦔", Hedgehog:"🦔", Ours:"🐻", Bear:"🐻", Cerf:"🦌", Stag:"🦌",
+  Canard:"🦆", Duck:"🦆", Lièvre:"🐇", Hare:"🐇", Tortue:"🐢", Turtle:"🐢",
+  Grenouille:"🐸", Frog:"🐸", Abeille:"🐝", Bee:"🐝", Fourmi:"🐜", Ant:"🐜"
 };
-const emojiFor = (totem) => TOTEM_EMOJI[(totem || "").split(" ")[0]] || "🎯";
+// On balaie chaque mot : FR « Ours Éveillé » → « Ours », EN « Bright Bear » → « Bear ».
+function emojiFor(totem) {
+  for (const w of (totem || "").split(" ")) if (TOTEM_EMOJI[w]) return TOTEM_EMOJI[w];
+  return "🎯";
+}
 
 function joursDepuis(iso) {
   if (!iso) return Infinity;
