@@ -22,6 +22,24 @@ function emojiFor(totem) {
   return "🎯";
 }
 
+// Titres lisibles des modules, par programme. Si un id est inconnu, on affiche l'id brut.
+// Les ids ne se chevauchent pas entre programmes, et un élève ne voit qu'un seul programme.
+const MODULE_INFO = {
+  // PAB — Assistance à la personne (DEP 5358)
+  m1:{t:"Analyse des métiers & éthique",o:1}, m2:{t:"Prévention des infections",o:2},
+  m3:{t:"Soins palliatifs & fin de vie",o:3}, m4:{t:"Premiers secours",o:4},
+  m5:{t:"Approches relationnelles",o:5}, m6:{t:"AVQ & soins de longue durée",o:6},
+  m7:{t:"Maladies & incapacités physiques",o:7}, m8:{t:"Médicaments & soins invasifs",o:8},
+  m9:{t:"Soins à domicile",o:9}, m10:{t:"Intégration au milieu de travail",o:10},
+  // SASI — Santé, assistance et soins infirmiers (DEP 5325)
+  anatomie:{t:"Anatomie & physiologie",o:1}, signes_vitaux:{t:"Signes vitaux",o:2},
+  medicaments:{t:"Médicaments",o:3}, soins_base:{t:"Soins de base",o:4},
+  plaies:{t:"Plaies & prélèvements",o:5}, sante_mentale:{t:"Santé mentale",o:6},
+  personnes_agees:{t:"Personnes âgées",o:7}, fin_vie:{t:"Soins palliatifs",o:8}
+};
+const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
+const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
+
 function joursDepuis(iso) {
   if (!iso) return Infinity;
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -196,14 +214,14 @@ function renderStudent(eleve) {
   // Regroupe la progression par module → 3 niveaux
   const parModule = {};
   s.rows.forEach(r => { (parModule[r.module_id] = parModule[r.module_id] || {})[r.niveau] = r.meilleur_score; });
-  const modules = Object.keys(parModule).sort();
+  const modules = Object.keys(parModule).sort((a,b) => moduleOrder(a) - moduleOrder(b) || a.localeCompare(b));
   const modRows = modules.length ? modules.map(m => {
     const pips = [1,2,3].map(n => {
       const sc = parModule[m][n];
       if (sc == null) return `<span class="pip none">–</span>`;
       return `<span class="pip ${sc>=70?"pass":"try"}">${sc}</span>`;
     }).join("");
-    return `<div class="mod"><span class="mt"><span class="mn">${m}</span></span><span class="pips">${pips}</span></div>`;
+    return `<div class="mod"><span class="mt"><span class="mn">${moduleTitle(m)}</span></span><span class="pips">${pips}</span></div>`;
   }).join("") : `<div class="mod"><span class="mt" style="color:var(--ink-soft)">Aucune progression enregistrée.</span><span></span></div>`;
 
   return shell(`${cache.classe.nom} › <b>${eleve.totem}</b>`, `
