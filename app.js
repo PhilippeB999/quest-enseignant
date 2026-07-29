@@ -35,7 +35,28 @@ const MODULE_INFO = {
   anatomie:{t:"Anatomie & physiologie",o:1}, signes_vitaux:{t:"Signes vitaux",o:2},
   medicaments:{t:"Médicaments",o:3}, soins_base:{t:"Soins de base",o:4},
   plaies:{t:"Plaies & prélèvements",o:5}, sante_mentale:{t:"Santé mentale",o:6},
-  personnes_agees:{t:"Personnes âgées",o:7}, fin_vie:{t:"Soins palliatifs",o:8}
+  personnes_agees:{t:"Personnes âgées",o:7}, fin_vie:{t:"Soins palliatifs",o:8},
+  // ChantierQuest — Conduite d'engins de chantier (DEP 5220)
+  c01:{t:"Se situer au regard des organismes de l'industrie de la construction",o:1},
+  c02:{t:"Appliquer des règles de santé et de sécurité sur les chantiers",o:2},
+  c03:{t:"Se situer au regard du métier et de la démarche de formation",o:3},
+  c04:{t:"Effectuer l'entretien préventif et le dépannage",o:4},
+  c05:{t:"Appliquer la technologie de base",o:5},
+  c06:{t:"Appliquer des notions de compactage et d'épandage des enrobés",o:6},
+  c07:{t:"Communiquer en milieu de travail",o:7},
+  c08:{t:"Travaux de manutention et chargement avec une chargeuse",o:8},
+  c09:{t:"Travaux de préparation du terrain avec une pelle",o:9},
+  c10:{t:"Travaux de préparation du terrain avec une niveleuse",o:10},
+  c11:{t:"Désagrégation de matériaux avec une chargeuse-pelleteuse",o:11},
+  c12:{t:"Travaux de préparation du terrain avec un bouteur",o:12},
+  c13:{t:"Travaux d'excavation avec une pelle",o:13},
+  c14:{t:"Travaux d'excavation avec une chargeuse-pelleteuse",o:14},
+  c15:{t:"Construction d'infrastructures avec une pelle",o:15},
+  c16:{t:"Construction d'infrastructures avec un bouteur",o:16},
+  c17:{t:"Construction d'infrastructures avec une niveleuse",o:17},
+  c18:{t:"Travaux avec un rouleau compacteur",o:18},
+  c19:{t:"Travaux de finition avec une niveleuse",o:19},
+  c20:{t:"Utiliser des moyens de recherche d'emploi",o:20}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
