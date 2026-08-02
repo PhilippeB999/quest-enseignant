@@ -89,6 +89,10 @@ function renderLogin(message) {
         <button type="submit" id="loginBtn">M'envoyer un lien</button>
       </form>
       ${message ? `<div class="msg ${message.type}">${message.text}</div>` : ""}
+      <div class="demo-cta">
+        <button type="button" id="demoBtn" class="demo-link">👀 Voir une démo du tableau de bord</button>
+        <small>Aperçu avec des données fictives, sans connexion.</small>
+      </div>
     </div>
   </div>`;
   document.getElementById("loginForm").addEventListener("submit", async (e) => {
@@ -105,6 +109,37 @@ function renderLogin(message) {
       renderLogin({ type: "ok", text: "Lien envoyé ! Ouvre ton courriel et clique le lien pour te connecter." });
     }
   });
+  const demoBtn = document.getElementById("demoBtn");
+  if (demoBtn) demoBtn.addEventListener("click", enterDemo);
+}
+
+/* ------------------ Mode démonstration public (sans connexion) ------------------
+   Un prospect n'a pas de compte : il ne verrait que « Aucun groupe rattaché ».
+   Ce mode charge les cohortes de démonstration via des RPC security-definer
+   (demo_dashboard) qui ne renvoient QUE les organisations marquées is_demo = true —
+   jamais de donnée réelle. Lecture seule, aucun login, clé publiable uniquement. */
+async function enterDemo() {
+  cache.demo = true;
+  root.innerHTML = `<div class="loading">Chargement de la démonstration…</div>`;
+  const { data, error } = await supabase.rpc("demo_dashboard");
+  if (error || !data || !data.org) {
+    cache.demo = false;
+    renderLogin({ type: "err", text: "La démonstration est momentanément indisponible." });
+    return;
+  }
+  cache.org = data.org;
+  cache.classes = data.classes || [];
+  cache.demoEleves = data.eleves || [];
+  cache.demoProg = data.progression || [];
+  cache.userEmail = "";
+  cache.classe = null;
+  cache.view = "classes";
+  render();
+}
+
+function exitDemo() {
+  cache = { org: null, classes: [], view: "classes", classe: null, eleves: [], prog: [] };
+  renderLogin();
 }
 
 /* ------------------ Chargement des données ------------------ */
@@ -127,6 +162,16 @@ async function loadDashboard() {
 }
 
 async function openClass(classe) {
+  // En mode démo, tout est déjà en mémoire (RPC demo_dashboard) : aucun accès
+  // direct aux tables (la RLS le bloquerait pour un visiteur non connecté).
+  if (cache.demo) {
+    const eleves = (cache.demoEleves || []).filter(e => e.classe_id === classe.id);
+    const ids = eleves.map(e => e.id);
+    const prog = (cache.demoProg || []).filter(p => ids.includes(p.eleve_id));
+    cache.classe = classe; cache.eleves = eleves; cache.prog = prog; cache.view = "cohort";
+    render();
+    return;
+  }
   root.innerHTML = `<div class="loading">Chargement de ${classe.nom}…</div>`;
   const { data: eleves } = await supabase.from("eleves").select("*").eq("classe_id", classe.id);
   const ids = (eleves || []).map(e => e.id);
@@ -153,6 +198,12 @@ function shell(crumbs, body) {
   const licDate = cache.org.licence_fin
     ? new Date(cache.org.licence_fin + "T00:00:00").toLocaleDateString("fr-CA", { day:"numeric", month:"long", year:"numeric" })
     : "—";
+  const who = cache.demo
+    ? `<div class="who"><b>Mode démonstration</b>${cache.org.nom}<br><button data-exitdemo>Quitter la démo</button></div>`
+    : `<div class="who"><b>${cache.userEmail || ""}</b>${cache.org.nom}<br><button data-signout>Se déconnecter</button></div>`;
+  const demoBanner = cache.demo
+    ? `<div class="demo-banner">🔍 <b>Mode démonstration</b> — données fictives. Aucune donnée réelle d'élève.</div>`
+    : "";
   return `
   <div class="app">
     <aside class="side">
@@ -160,9 +211,10 @@ function shell(crumbs, body) {
       <div class="navlbl">Mes groupes</div>
       <button class="nav ${cache.view==='classes'?'on':''}" data-nav="classes">▦ Vue d'ensemble</button>
       ${cache.classe ? `<button class="nav ${cache.view!=='classes'?'on':''}" data-nav="cohort">👥 ${cache.classe.nom}</button>` : ""}
-      <div class="who"><b>${cache.userEmail || ""}</b>${cache.org.nom}<br><button data-signout>Se déconnecter</button></div>
+      ${who}
     </aside>
     <div class="main">
+      ${demoBanner}
       <div class="top">
         <div class="crumbs">${crumbs}</div>
         <div class="lic"><span class="dot"></span><em>Licence jusqu'au</em> <b>${licDate}</b></div>
@@ -279,16 +331,20 @@ function render() {
   }));
   const so = root.querySelector("[data-signout]");
   if (so) so.addEventListener("click", async () => { await supabase.auth.signOut(); location.reload(); });
+  const ex = root.querySelector("[data-exitdemo]");
+  if (ex) ex.addEventListener("click", exitDemo);
 }
 
 /* ------------------ Démarrage ------------------ */
 
 supabase.auth.onAuthStateChange((_event, session) => {
-  if (session) { cache.userEmail = session.user.email; loadDashboard(); }
-  else renderLogin();
+  if (session) { cache.demo = false; cache.userEmail = session.user.email; loadDashboard(); }
+  else if (!cache.demo) renderLogin();   // en mode démo, ne pas revenir à l'écran de connexion
 });
 
 (async () => {
+  // Accès démo direct par lien : prof.questedu.ca/?demo=1 (aucune connexion requise).
+  if (new URLSearchParams(location.search).get("demo") === "1") { enterDemo(); return; }
   const { data } = await supabase.auth.getSession();
   if (data.session) { cache.userEmail = data.session.user.email; loadDashboard(); }
   else renderLogin();
