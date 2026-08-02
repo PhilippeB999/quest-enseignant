@@ -360,14 +360,19 @@ function render() {
 
 /* ------------------ Démarrage ------------------ */
 
+// Un lien ?demo=1 FORCE le mode démonstration, même si un enseignant est déjà connecté :
+// c'est un outil de présentation, il doit toujours montrer la démo (jamais les vraies données).
+const demoForced = new URLSearchParams(location.search).get("demo") === "1";
+
 supabase.auth.onAuthStateChange((_event, session) => {
+  if (demoForced) return;                // démo forcée : ne jamais charger le vrai tableau de bord
   if (session) { cache.demo = false; cache.userEmail = session.user.email; loadDashboard(); }
   else if (!cache.demo) renderLogin();   // en mode démo, ne pas revenir à l'écran de connexion
 });
 
 (async () => {
-  // Accès démo direct par lien : prof.questedu.ca/?demo=1 (aucune connexion requise).
-  if (new URLSearchParams(location.search).get("demo") === "1") { enterDemo(); return; }
+  // Accès démo direct par lien : prof.questedu.ca/?demo=1 (aucune connexion requise, priorité sur la session).
+  if (demoForced) { enterDemo(); return; }
   const { data } = await supabase.auth.getSession();
   if (data.session) { cache.userEmail = data.session.user.email; loadDashboard(); }
   else renderLogin();
