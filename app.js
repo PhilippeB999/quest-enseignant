@@ -122,9 +122,17 @@ async function enterDemo() {
   cache.demo = true;
   root.innerHTML = `<div class="loading">Chargement de la démonstration…</div>`;
   const { data, error } = await supabase.rpc("demo_dashboard");
-  if (error || !data || !data.org) {
+  if (error) {
+    // Vraie erreur réseau / RPC : problème temporaire, on invite à réessayer.
     cache.demo = false;
-    renderLogin({ type: "err", text: "La démonstration est momentanément indisponible." });
+    renderLogin({ type: "err", text: "La démonstration est momentanément indisponible. Réessaie dans un instant." });
+    return;
+  }
+  if (!data || !data.org) {
+    // La RPC a répondu sans erreur, mais ne renvoie aucune organisation : la démo est
+    // expirée (licence_fin dépassée) ou désactivée. Message distinct, verrou global.
+    cache.demo = false;
+    renderLogin({ type: "err", text: "La démonstration n'est plus disponible. Écrivez-nous pour obtenir un accès." });
     return;
   }
   cache.org = data.org;
