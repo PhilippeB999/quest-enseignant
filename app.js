@@ -132,7 +132,7 @@ async function enterDemo() {
     // La RPC a répondu sans erreur, mais ne renvoie aucune organisation : la démo est
     // expirée (licence_fin dépassée) ou désactivée. Message distinct, verrou global.
     cache.demo = false;
-    renderLogin({ type: "err", text: "La démonstration n'est plus disponible. Écrivez-nous pour obtenir un accès." });
+    renderLogin({ type: "err", text: "La démonstration n'est plus disponible. Écrivez-nous à philippe.beaubien@gmail.com pour obtenir un accès." });
     return;
   }
   cache.org = data.org;
