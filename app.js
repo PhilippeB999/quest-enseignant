@@ -121,8 +121,23 @@ function renderLogin(message) {
 async function enterDemo() {
   cache.demo = true;
   root.innerHTML = `<div class="loading">Chargement de la démonstration…</div>`;
-  const { data, error } = await supabase.rpc("demo_dashboard");
-  if (error) {
+  // On appelle la RPC avec la clé anonyme en fetch brut, SANS passer par supabase-js :
+  // ce dernier attache une éventuelle session enseignant stockée (jeton expiré) qui ferait
+  // échouer l'appel par un 401. La démo est publique et anonyme — la clé publiable suffit.
+  let data = null;
+  try {
+    const res = await fetch(SUPABASE_URL + "/rest/v1/rpc/demo_dashboard", {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json"
+      },
+      body: "{}"
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    data = await res.json();
+  } catch (e) {
     // Vraie erreur réseau / RPC : problème temporaire, on invite à réessayer.
     cache.demo = false;
     renderLogin({ type: "err", text: "La démonstration est momentanément indisponible. Réessaie dans un instant." });
