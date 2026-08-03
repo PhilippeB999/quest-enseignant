@@ -4,7 +4,7 @@
    déployée arrive donc tout de suite — jamais de version périmée servie aux enseignants.
    On ne touche qu'aux fichiers du site : Supabase et le CDN passent sans interception. */
 
-const CACHE = "quest-enseignant-v6";
+const CACHE = "quest-enseignant-v7";
 const ASSETS = ["index.html", "app.js", "style.css", "icon-192.png"];
 
 self.addEventListener("install", (e) => {
