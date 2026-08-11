@@ -189,6 +189,20 @@ function dateRelative(iso) {
 
 let cache = { org: null, classes: [], view: "classes", classe: null, eleves: [], prog: [] };
 
+/* ------------------ Consentement Loi 25 (version légère) ------------------
+   Le courriel de l'enseignant est un renseignement personnel. Plutôt qu'une case à
+   cocher bloquante, on informe : consentement implicite par l'usage. Un avis discret
+   près du bouton de connexion renvoie à la politique de confidentialité. La date du
+   consentement est notée dans le localStorage au moment de l'envoi du lien (trivial).
+   L'avis se localise selon la langue du navigateur (FR par défaut). */
+const LANG = (navigator.language || "fr").toLowerCase().startsWith("en") ? "en" : "fr";
+const CONSENT_KEY = "quest_ens_consent_confidentialite";
+const PRIVACY_URL = "https://productions-imedias.com/confidentialite.html";
+const CONSENT_NOTICE = {
+  fr: `En vous connectant, vous acceptez notre <a href="${PRIVACY_URL}" target="_blank" rel="noopener">politique de confidentialité</a>.`,
+  en: `By signing in, you agree to our <a href="${PRIVACY_URL}" target="_blank" rel="noopener">privacy policy</a>.`
+};
+
 /* ------------------ Authentification ------------------ */
 
 function renderLogin(message) {
@@ -202,6 +216,7 @@ function renderLogin(message) {
         <label for="email">Ton courriel</label>
         <input id="email" type="email" required placeholder="prenom.nom@exemple.ca" autocomplete="email" />
         <button type="submit" id="loginBtn">M'envoyer un lien</button>
+        <p class="consent-notice">${CONSENT_NOTICE[LANG]}</p>
       </form>
       ${message ? `<div class="msg ${message.type}">${message.text}</div>` : ""}
       <div class="demo-cta">
@@ -214,6 +229,9 @@ function renderLogin(message) {
     e.preventDefault();
     const email = document.getElementById("email").value.trim();
     const btn = document.getElementById("loginBtn");
+    // Consentement implicite par l'usage : on note la date d'acceptation au moment de
+    // l'envoi du lien (preuve légère côté client).
+    try { localStorage.setItem(CONSENT_KEY, new Date().toISOString()); } catch (_) {}
     btn.disabled = true; btn.textContent = "Envoi…";
     const { error } = await supabase.auth.signInWithOtp({
       email, options: { emailRedirectTo: window.location.href.split("#")[0] }
