@@ -171,7 +171,31 @@ const MODULE_INFO = {
   soud24:{t:"Soudage d'aluminium (GTAW) – toutes positions",o:24},
   soud25:{t:"Assemblages complexes",o:25},
   soud26:{t:"Cheminement professionnel",o:26},
-  soud27:{t:"Intégration au milieu de travail",o:27}
+  soud27:{t:"Intégration au milieu de travail",o:27},
+  // ComptaQuest — Comptabilité (DEP 5231)
+  compta01:{t:"Métier et formation",o:1},
+  compta02:{t:"Recherche d'information",o:2},
+  compta03:{t:"Tableaux et graphiques",o:3},
+  compta04:{t:"Calcul de pièces",o:4},
+  compta05:{t:"Mise en page de correspondance",o:5},
+  compta06:{t:"Rédaction en français",o:6},
+  compta07:{t:"Traitement de pièces",o:7},
+  compta08:{t:"Gestion de l'encaisse",o:8},
+  compta09:{t:"Législation des affaires",o:9},
+  compta10:{t:"Interactions professionnelles",o:10},
+  compta11:{t:"Communication en anglais",o:11},
+  compta12:{t:"Production de paies",o:12},
+  compta13:{t:"Rédaction en anglais",o:13},
+  compta14:{t:"Traitement de données",o:14},
+  compta15:{t:"Tâches courantes",o:15},
+  compta16:{t:"Efficience",o:16},
+  compta17:{t:"Coût d'un bien et d'un service",o:17},
+  compta18:{t:"Tâches de fin de période",o:18},
+  compta19:{t:"Tâches de fin d'année",o:19},
+  compta20:{t:"Déclaration de revenu",o:20},
+  compta21:{t:"Système comptable",o:21},
+  compta22:{t:"Cheminement professionnel",o:22},
+  compta23:{t:"Intégration au travail",o:23}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
