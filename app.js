@@ -231,7 +231,19 @@ const MODULE_INFO = {
   secmed06:{t:"Soutien administratif en lien avec les consultations médicales",o:6},
   secmed07:{t:"Transcription de rapports d'imagerie médicale",o:7},
   secmed08:{t:"Transcription de comptes rendus opératoires",o:8},
-  secmed09:{t:"Intégration au milieu de travail",o:9}
+  secmed09:{t:"Intégration au milieu de travail",o:9},
+  // PediatrieQuest — Soins infirmiers pédiatriques
+  // ⚠️ "signes_vitaux_pedia" et non "signes_vitaux" : cet id-là appartient déjà à SASI.
+  croissance:{t:"Croissance & développement",o:1},
+  signes_vitaux_pedia:{t:"Signes vitaux pédiatriques",o:2},
+  nouveau_ne:{t:"Nouveau-né & nourrisson",o:3},
+  maladies:{t:"Maladies courantes & fièvre",o:4},
+  vaccination:{t:"Vaccination & immunisation",o:5},
+  medication:{t:"Médication & calcul de dose",o:6},
+  nutrition:{t:"Nutrition infantile",o:7},
+  securite:{t:"Sécurité & prévention",o:8},
+  famille:{t:"Communication & famille",o:9},
+  urgences:{t:"Urgences pédiatriques",o:10}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
