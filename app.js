@@ -243,7 +243,13 @@ const MODULE_INFO = {
   nutrition:{t:"Nutrition infantile",o:7},
   securite:{t:"Sécurité & prévention",o:8},
   famille:{t:"Communication & famille",o:9},
-  urgences:{t:"Urgences pédiatriques",o:10}
+  urgences:{t:"Urgences pédiatriques",o:10},
+  // PérinatalitéQuest — Soins à la mère et au nouveau-né (SASI, compétences 27-28)
+  approche_perinatale:{t:"Approche privilégiée mère et nouveau-né",o:1},
+  soins_mere_nouveaune:{t:"Soins aux mères et aux nouveaux-nés",o:2},
+  // SantéMentaleQuest — Approche en santé mentale (SASI, compétence 20)
+  // ⚠️ "approche_sante_mentale" et non "sante_mentale" : cet id-là appartient déjà à SASI.
+  approche_sante_mentale:{t:"Approche privilégiée en santé mentale",o:1}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
