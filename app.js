@@ -254,6 +254,52 @@ const MODULE_INFO = {
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
 
+/* ------------------ StageQuest — carnet de stage (option de licence) ------------------
+   NOM DE PRODUIT : une seule ligne à changer. Le module est vendu comme un
+   produit distinct, en seconde rencontre, après l'app de révision. Le nom est
+   neutre vis-à-vis du métier (il tiendra en plomberie ou en soudage), et la
+   CLÉ TECHNIQUE de l'option de licence reste `carnet` côté SQL : renommer le
+   produit ne doit jamais obliger à toucher à la base. */
+const CARNET_NOM = "StageQuest";
+
+/* ⚠️ Le carnet est la première donnée de ce tableau de bord qui soit du TEXTE
+   LIBRE saisi par un élève (nom, employeur, note). Elle est injectée dans de
+   l'innerHTML, dans une page où l'enseignant est AUTHENTIFIÉ : sans échappement,
+   une note contenant du HTML s'exécuterait avec sa session, qui donne accès à
+   tout son centre. Tout ce qui vient de carnet_realisations passe donc par esc().
+   (La progression, elle, ne contient que des nombres et des totems d'une liste
+   fermée — c'est pourquoi le reste du fichier n'en avait pas besoin.) */
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+/* Libellés des « gestes du métier » du carnet. Même principe que MODULE_INFO :
+   repli sur l'id brut si un geste est inconnu, pour qu'un ajout côté app élève
+   n'affiche jamais une case vide ici. La réalisation porte déjà son libellé
+   (`geste_nom`), figé au moment de la saisie — ce dictionnaire ne sert que de
+   repli et à l'ordre d'affichage.
+   ⚠️ Ces 8 gestes sont ceux de la maquette, PAS le référentiel du DEP 5220.
+   Voir le commentaire en tête de chantierquest-web/carnet.js. */
+const GESTE_INFO = {
+  inspection:{t:"Inspecter l'engin avant le travail",o:1},
+  deplacement:{t:"Déplacer l'engin sur le chantier",o:2},
+  tranchee:{t:"Creuser une tranchée",o:3},
+  nivellement:{t:"Niveler un terrain",o:4},
+  chargement:{t:"Charger un camion",o:5},
+  remblai:{t:"Remblayer et compacter",o:6},
+  signaleur:{t:"Travailler avec un signaleur",o:7},
+  entretien:{t:"Faire l'entretien de base",o:8}
+};
+const gesteTitle = (id, fourni) => fourni || (GESTE_INFO[id] && GESTE_INFO[id].t) || id;
+const CARNET_STATUT = {
+  attente:{ t:"À traiter", c:"warn" },
+  validee:{ t:"Validée",   c:"ok" },
+  refaire:{ t:"À refaire", c:"crit" }
+};
+/* Les colonnes de la liste : TOUT sauf `photo`. Une liste de groupe tirerait
+   sinon des mégaoctets de base64 sur le réseau du CFP à chaque ouverture ; la
+   photo est demandée à la pièce, quand l'enseignant ouvre une réalisation. */
+const CARNET_COLONNES = "id,appareil_id,eleve_nom,eleve_totem,employeur,geste_id,geste_nom,engin,note,statut,commentaire_prof,decide_le,decide_par,cree_le,recu_le";
+
 function joursDepuis(iso) {
   if (!iso) return Infinity;
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -265,7 +311,8 @@ function dateRelative(iso) {
   return `il y a ${j} jours`;
 }
 
-let cache = { org: null, classes: [], view: "classes", classe: null, eleves: [], prog: [] };
+let cache = { org: null, classes: [], view: "classes", classe: null, eleves: [], prog: [],
+  carnet: [], carnetHeures: [], carnetSel: null, carnetPhotos: {}, carnetActif: false, carnetMsg: "" };
 
 /* ------------------ Consentement Loi 25 (version légère) ------------------
    Le courriel de l'enseignant est un renseignement personnel. Plutôt qu'une case à
@@ -415,7 +462,90 @@ async function openClass(classe) {
     prog = data || [];
   }
   cache.classe = classe; cache.eleves = eleves || []; cache.prog = prog; cache.view = "cohort";
+  await loadCarnet(classe);
   render();
+}
+
+/* ------------------ Carnet de stage : lecture ------------------
+   Lecture DIRECTE des tables, protégée par de vraies policies RLS liées à
+   l'enseignant authentifié (voir chantierquest-web/supabase_carnet.sql §6) :
+   `carnet_est_ma_classe()` s'appuie sur la RLS déjà en place sur `classes`, donc
+   un enseignant ne reçoit que les réalisations des groupes de son organisation.
+   Aucune fonction ouverte à `anon` n'est utilisée ici — contrairement au côté
+   élève, qui est anonyme et passe par `security definer`.
+
+   Si les tables n'existent pas encore (SQL non exécuté), on se tait et le
+   carnet reste simplement absent du tableau de bord. */
+async function loadCarnet(classe) {
+  cache.carnet = []; cache.carnetHeures = []; cache.carnetSel = null;
+  cache.carnetPhotos = {}; cache.carnetActif = false; cache.carnetMsg = "";
+  if (cache.demo) return;                       // la démo n'a pas de carnet semé
+  const code = classe && classe.code_classe;
+  if (!code) return;
+  const { data, error } = await supabase
+    .from("carnet_realisations")
+    .select(CARNET_COLONNES)
+    .eq("classe_code", code.toUpperCase())
+    .order("cree_le", { ascending: false });
+  if (error) return;                            // table absente ou RLS : carnet masqué
+  cache.carnet = data || [];
+  // On n'affiche la section que s'il y a quelque chose dedans. Un centre sans
+  // l'option ne peut avoir AUCUNE ligne (carnet_soumettre la refuse côté
+  // serveur) : il ne découvre donc pas une fonction qu'il n'a pas achetée.
+  cache.carnetActif = cache.carnet.length > 0;
+  if (!cache.carnetActif) return;
+  const { data: h } = await supabase
+    .from("carnet_heures")
+    .select("appareil_id,eleve_nom,eleve_totem,total_heures,objectif_heures,maj_le")
+    .eq("classe_code", code.toUpperCase());
+  cache.carnetHeures = h || [];
+}
+
+/* La photo n'est tirée qu'à la demande, une à la fois, et mise en cache pour la
+   durée de la session. C'est ce qui garde l'ouverture d'un groupe légère. */
+async function loadCarnetPhoto(id) {
+  if (cache.carnetPhotos[id] !== undefined) return;
+  cache.carnetPhotos[id] = null;                // marque « en cours »
+  const { data } = await supabase
+    .from("carnet_realisations").select("photo").eq("id", id).maybeSingle();
+  cache.carnetPhotos[id] = (data && data.photo) || "";
+  render();
+}
+
+/* LA DÉCISION DE L'ENSEIGNANT.
+   Un simple UPDATE : la RLS vérifie que la réalisation appartient bien à une de
+   ses classes, et les privilèges de COLONNE font que seules `statut` et
+   `commentaire_prof` sont modifiables — la photo, la note et le geste de l'élève
+   sont hors d'atteinte, Postgres refuserait. `decide_par` et `decide_le` sont
+   posés par le trigger côté serveur, jamais par ce code. */
+async function decideCarnet(id, statut) {
+  const champ = document.getElementById("carnetComm-" + id);
+  const commentaire = champ ? champ.value.trim().slice(0, 500) : "";
+  if (statut === "refaire" && !commentaire) {
+    cache.carnetMsg = "Écris un commentaire avant de renvoyer le geste : c'est ce que l'élève verra dans son app.";
+    render();
+    return;
+  }
+  cache.carnetMsg = "";
+  const { error } = await supabase
+    .from("carnet_realisations")
+    .update({ statut, commentaire_prof: commentaire || null })
+    .eq("id", id);
+  if (error) {
+    cache.carnetMsg = "La décision n'a pas pu être enregistrée : " + error.message;
+    render();
+    return;
+  }
+  const r = cache.carnet.find(x => x.id === id);
+  if (r) { r.statut = statut; r.commentaire_prof = commentaire || null; r.decide_le = new Date().toISOString(); r.decide_par = cache.userEmail || ""; }
+  cache.carnetSel = null;
+  render();
+}
+
+function carnetAttente() { return cache.carnet.filter(r => r.statut === "attente"); }
+function carnetNomEleve(r) { return r.eleve_nom || r.eleve_totem || "Élève"; }
+function carnetHeuresDe(appareilId) {
+  return cache.carnetHeures.find(h => h.appareil_id === appareilId) || null;
 }
 
 /* Statistiques par élève, à partir de la progression réelle. */
@@ -444,7 +574,8 @@ function shell(crumbs, body) {
       <div class="brand"><span class="mk">🛡️</span><span><b>Quest</b><small>ESPACE ENSEIGNANT</small></span></div>
       <div class="navlbl">Mes groupes</div>
       <button class="nav ${cache.view==='classes'?'on':''}" data-nav="classes">▦ Vue d'ensemble</button>
-      ${cache.classe ? `<button class="nav ${cache.view!=='classes'?'on':''}" data-nav="cohort">👥 ${cache.classe.nom}</button>` : ""}
+      ${cache.classe ? `<button class="nav ${(cache.view==='cohort'||cache.view==='student')?'on':''}" data-nav="cohort">👥 ${cache.classe.nom}</button>` : ""}
+      ${cache.classe && cache.carnetActif ? `<button class="nav ${cache.view==='carnet'?'on':''}" data-nav="carnet">🦺 ${CARNET_NOM}${carnetAttente().length ? ` <span class="navbadge">${carnetAttente().length}</span>` : ""}</button>` : ""}
       ${who}
     </aside>
     <div class="main">
@@ -507,12 +638,95 @@ function renderCohort() {
         <div class="kpi"><u>Niveaux réussis</u><strong>${totalReussis}</strong></div>
         <div class="kpi"><u>Actifs (7 j)</u><strong>${actifs}</strong></div>
         <div class="kpi ${aRelancer?'alert':''}"><u>À relancer</u><strong>${aRelancer}</strong></div>
+        ${cache.carnetActif ? `<div class="kpi clic ${carnetAttente().length?'alert':''}" data-nav="carnet"><u>${CARNET_NOM} · à traiter</u><strong>${carnetAttente().length}</strong></div>` : ""}
       </div>
       <div class="tablewrap"><table>
         <thead><tr><th>Totem</th><th>Progression</th><th>Modules maîtrisés</th><th>Dernière activité</th><th>État</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
       <p class="note">« Modules maîtrisés » = niveau 3 réussi. « À relancer » = aucune activité depuis plus de 7 jours. Les totems remplacent les noms réels.</p>
+    </div>`);
+}
+
+/* ------------------ Vue « carnet de stage » ------------------
+   Les réalisations entrantes avec leur photo, et les deux actions de
+   l'enseignant : Validé, ou À refaire avec un commentaire. */
+function renderCarnetView() {
+  const c = cache.classe;
+  const attente = carnetAttente();
+  const traitees = cache.carnet.filter(r => r.statut !== "attente");
+  const validees = cache.carnet.filter(r => r.statut === "validee").length;
+  const aRefaire = cache.carnet.filter(r => r.statut === "refaire").length;
+  const enStage = new Set(cache.carnet.map(r => r.appareil_id)).size;
+
+  const carte = (r) => {
+    const st = CARNET_STATUT[r.statut] || CARNET_STATUT.attente;
+    const ouvert = cache.carnetSel === r.id;
+    const photo = cache.carnetPhotos[r.id];
+    const h = carnetHeuresDe(r.appareil_id);
+    const bloc = photo === undefined
+      ? `<button class="cbtn ghost" data-carnet-photo="${r.id}">📷 Voir la photo</button>`
+      : photo === null
+        ? `<div class="cphoto-load">Chargement de la photo…</div>`
+        : photo
+          ? `<img class="cphoto" src="${esc(photo)}" alt="Photo du travail de ${esc(carnetNomEleve(r))}" />`
+          : `<div class="cphoto-load">Aucune photo n'a été joint à cette réalisation.</div>`;
+    return `
+      <article class="ccase ${ouvert ? "open" : ""}">
+        <div class="ccase-head" data-carnet-open="${r.id}">
+          <span class="em">${emojiFor(r.eleve_totem)}</span>
+          <div class="ccase-id">
+            <b>${esc(gesteTitle(r.geste_id, r.geste_nom))}</b>
+            <span>${esc(carnetNomEleve(r))}${r.employeur ? " · " + esc(r.employeur) : ""}${r.engin ? " · " + esc(r.engin) : ""}</span>
+          </div>
+          <span class="pill ${st.c}">${st.t}</span>
+          <span class="ccase-date">${dateRelative(r.cree_le)}</span>
+        </div>
+        ${ouvert ? `
+        <div class="ccase-body">
+          ${bloc}
+          ${r.note ? `<p class="cnote">« ${esc(r.note)} »</p>` : `<p class="cnote vide">L'élève n'a pas laissé de note.</p>`}
+          <div class="cmeta">
+            Reçue ${r.recu_le ? dateRelative(r.recu_le) : "—"}${h ? ` · ${h.total_heures} h de stage déclarées${h.objectif_heures ? " sur " + h.objectif_heures + " h" : ""}` : ""}
+          </div>
+          ${r.statut === "attente" ? `
+            <label for="carnetComm-${r.id}">Commentaire pour l'élève</label>
+            <textarea id="carnetComm-${r.id}" maxlength="500" placeholder="Ex. : belle tranchée, surveille ta pente la prochaine fois."></textarea>
+            <div class="cactions">
+              <button class="cbtn ok" data-carnet-ok="${r.id}">✓ Validé</button>
+              <button class="cbtn redo" data-carnet-redo="${r.id}">↩ À refaire</button>
+            </div>
+            <p class="cnote vide">Le commentaire est obligatoire pour « À refaire » : c'est ce que l'élève lira dans son app.</p>
+          ` : `
+            <div class="cdecision">
+              <b>${r.statut === "validee" ? "Validée" : "Renvoyée à refaire"}</b>
+              ${r.decide_le ? ` ${dateRelative(r.decide_le)}` : ""}${r.decide_par ? ` par ${esc(r.decide_par)}` : ""}
+              ${r.commentaire_prof ? `<p class="cnote">« ${esc(r.commentaire_prof)} »</p>` : ""}
+            </div>
+          `}
+        </div>` : ""}
+      </article>`;
+  };
+
+  const liste = (arr, vide) => arr.length ? arr.map(carte).join("") : `<div class="empty">${vide}</div>`;
+
+  return shell(`${cache.org.nom} › ${c.nom} › <b>${CARNET_NOM}</b>`, `
+    <div class="view">
+      <button class="back" data-nav="cohort">← Retour au groupe</button>
+      <h1>${CARNET_NOM}</h1>
+      <p class="subtitle">${c.nom} · les gestes du métier que tes élèves photographient en stage.</p>
+      ${cache.carnetMsg ? `<div class="cmsg">${esc(cache.carnetMsg)}</div>` : ""}
+      <div class="kpis">
+        <div class="kpi ${attente.length?'alert':''}"><u>À traiter</u><strong>${attente.length}</strong></div>
+        <div class="kpi"><u>Validées</u><strong>${validees}</strong></div>
+        <div class="kpi"><u>À refaire</u><strong>${aRefaire}</strong></div>
+        <div class="kpi"><u>Élèves en stage</u><strong>${enStage}</strong></div>
+      </div>
+      <h2 class="csec">À traiter</h2>
+      <div class="clist">${liste(attente, "Rien à traiter pour l'instant. Les réalisations arrivent ici dès qu'un élève en envoie une.")}</div>
+      <h2 class="csec">Déjà traitées</h2>
+      <div class="clist">${liste(traitees, "Aucune réalisation traitée pour l'instant.")}</div>
+      <p class="note">Touche une réalisation pour voir la photo et décider. Tu ne peux pas modifier la photo, la note ni le geste de l'élève — seulement le statut et ton commentaire. L'élève reçoit le résultat dans son app au prochain lancement.</p>
     </div>`);
 }
 
@@ -549,6 +763,7 @@ function render() {
   let html;
   if (cache.view === "classes") html = renderClasses();
   else if (cache.view === "student") html = renderStudent(cache.currentEleve);
+  else if (cache.view === "carnet" && cache.carnetActif) html = renderCarnetView();
   else html = renderCohort();
   root.innerHTML = html;
 
@@ -557,7 +772,26 @@ function render() {
   }));
   root.querySelectorAll("[data-nav]").forEach(el => el.addEventListener("click", () => {
     if (el.dataset.nav === "classes") { cache.view = "classes"; render(); }
+    else if (el.dataset.nav === "carnet") { cache.view = "carnet"; cache.carnetMsg = ""; render(); }
     else { cache.view = "cohort"; render(); }
+  }));
+  root.querySelectorAll("[data-carnet-open]").forEach(el => el.addEventListener("click", () => {
+    const id = el.dataset.carnetOpen;
+    cache.carnetSel = cache.carnetSel === id ? null : id;
+    cache.carnetMsg = "";
+    render();
+  }));
+  root.querySelectorAll("[data-carnet-photo]").forEach(el => el.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    loadCarnetPhoto(el.dataset.carnetPhoto);
+  }));
+  root.querySelectorAll("[data-carnet-ok]").forEach(el => el.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    decideCarnet(el.dataset.carnetOk, "validee");
+  }));
+  root.querySelectorAll("[data-carnet-redo]").forEach(el => el.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    decideCarnet(el.dataset.carnetRedo, "refaire");
   }));
   root.querySelectorAll("[data-eleve]").forEach(el => el.addEventListener("click", () => {
     cache.currentEleve = cache.eleves.find(e => e.id === el.dataset.eleve);
