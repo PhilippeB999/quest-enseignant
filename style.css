@@ -145,7 +145,9 @@ tbody tr.clic { cursor:pointer; } tbody tr.clic:hover { background:var(--panel-2
 .ccase-head:hover { background:var(--panel-2); }
 .ccase-head .em { font-size:22px; }
 .ccase-id { min-width:0; }
-.ccase-id b { display:block; font-size:14px; }
+/* Le titre peut venir de `geste_nom`, écrit à la main par l'élève (geste
+   « autre ») : un mot très long ne doit pas élargir la carte. */
+.ccase-id b { display:block; font-size:14px; overflow-wrap:anywhere; }
 .ccase-id span { display:block; font-size:12px; color:var(--ink-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ccase-date { font-size:11.5px; color:var(--ink-faint); white-space:nowrap; }
 .pill.crit { background:var(--crit-bg); color:var(--crit); }
@@ -173,3 +175,32 @@ tbody tr.clic { cursor:pointer; } tbody tr.clic:hover { background:var(--panel-2
   .ccase-head { grid-template-columns:auto 1fr; }
   .ccase-head .pill, .ccase-head .ccase-date { grid-column:2; justify-self:start; }
 }
+
+/* --- StageQuest : témoin de mise à jour automatique + nouveautés --- */
+.clive-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 18px; }
+.clive { font-size:11.5px; font-weight:700; letter-spacing:.02em; padding:5px 11px; border-radius:99px;
+  background:var(--panel-2); border:1px solid var(--line); color:var(--ink-faint); white-space:nowrap; cursor:default; }
+.clive.on { background:var(--ok-bg); border-color:var(--ok); color:var(--ok); }
+.clive.repli { background:var(--warn-bg); border-color:var(--warn); color:var(--warn); }
+.crelire { background:var(--panel); border:1px solid var(--line-strong); color:var(--ink-soft);
+  border-radius:99px; padding:5px 13px; font-size:11.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+.crelire:hover { color:var(--ink); border-color:var(--accent-soft); }
+
+/* Réalisation arrivée pendant la session : visible d'un coup d'œil, même
+   projetée au fond d'une salle. Une seule animation courte, pas de clignotement. */
+.ccase.cneuf { border-color:var(--accent-soft); box-shadow:0 0 0 2px rgba(201,169,97,.32), var(--shadow);
+  animation:cneuf-arrivee .85s ease-out; }
+@keyframes cneuf-arrivee {
+  from { transform:translateY(-8px); opacity:.35; }
+  to   { transform:none; opacity:1; }
+}
+.cneuf-tag { display:inline-block; vertical-align:2px; margin-left:7px; font-size:9.5px; font-weight:800;
+  text-transform:uppercase; letter-spacing:.07em; padding:2px 7px; border-radius:99px;
+  background:var(--accent-soft); color:var(--accent-ink); }
+/* Geste écrit à la main par l'élève : discret, pas une alerte. L'enseignante
+   doit juste savoir que ce libellé ne vient pas de la liste du programme. */
+.clibre-tag { display:inline-block; vertical-align:2px; margin-left:7px; font-size:9.5px; font-weight:800;
+  text-transform:uppercase; letter-spacing:.07em; padding:2px 7px; border-radius:99px;
+  background:var(--panel-2); color:var(--ink-faint); border:1px solid var(--line-strong);
+  cursor:help; white-space:nowrap; }
+@media (prefers-reduced-motion: reduce) { .ccase.cneuf { animation:none; } }

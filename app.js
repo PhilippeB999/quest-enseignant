@@ -287,9 +287,23 @@ const GESTE_INFO = {
   chargement:{t:"Charger un camion",o:5},
   remblai:{t:"Remblayer et compacter",o:6},
   signaleur:{t:"Travailler avec un signaleur",o:7},
-  entretien:{t:"Faire l'entretien de base",o:8}
+  entretien:{t:"Faire l'entretien de base",o:8},
+  /* `autre` = geste que l'élève a écrit lui-même dans son app, parce qu'aucune
+     entrée de la liste ne décrivait son cas. Le libellé réel arrive dans
+     `geste_nom` ; ce repli ne sert que si ce texte est vide (ligne tronquée,
+     ou appel direct de la RPC). */
+  autre:{t:"Geste écrit par l'élève",o:99}
 };
+/* ⚠️ `fourni` (= geste_nom) est du TEXTE ÉCRIT PAR L'ÉLÈVE. Il n'est PAS
+   échappé ici : tous les appels doivent le passer par esc(), comme les autres
+   champs libres (nom, employeur, note, commentaire). C'est le vecteur à ne
+   jamais oublier — du texte d'élève qui s'exécuterait dans la session
+   authentifiée de l'enseignante. Voir renderCarnetView(). */
 const gesteTitle = (id, fourni) => fourni || (GESTE_INFO[id] && GESTE_INFO[id].t) || id;
+/* Geste hors liste : on le signale à l'enseignante, sinon elle ne peut pas
+   savoir que ce libellé est de la main de l'élève (et qu'il ne correspond à
+   aucun badge dans l'app). */
+const gesteEstLibre = (id) => id === "autre";
 const CARNET_STATUT = {
   attente:{ t:"À traiter", c:"warn" },
   validee:{ t:"Validée",   c:"ok" },
@@ -298,7 +312,21 @@ const CARNET_STATUT = {
 /* Les colonnes de la liste : TOUT sauf `photo`. Une liste de groupe tirerait
    sinon des mégaoctets de base64 sur le réseau du CFP à chaque ouverture ; la
    photo est demandée à la pièce, quand l'enseignant ouvre une réalisation. */
-const CARNET_COLONNES = "id,appareil_id,eleve_nom,eleve_totem,employeur,geste_id,geste_nom,engin,note,statut,commentaire_prof,decide_le,decide_par,cree_le,recu_le";
+/* `classe_code` est demandé explicitement (6 caractères) : il sert à REVALIDER
+   côté client que chaque ligne reçue appartient bien au groupe ouvert, sans
+   faire confiance au serveur. Voir carnetFiltreGroupe(). */
+const CARNET_COLONNES = "id,classe_code,appareil_id,eleve_nom,eleve_totem,employeur,geste_id,geste_nom,engin,note,statut,commentaire_prof,decide_le,decide_par,cree_le,recu_le";
+const CARNET_COLONNES_HEURES = "classe_code,appareil_id,eleve_nom,eleve_totem,total_heures,objectif_heures,maj_le";
+
+/* ⚠️ DEUXIÈME BARRIÈRE, CÔTÉ CLIENT.
+   La RLS filtre déjà côté serveur (policy `carnet_lecture_enseignant`). On
+   refiltre ici sur le code du groupe ouvert : même si le serveur poussait par
+   erreur la réalisation d'un autre centre, elle ne s'afficherait jamais. */
+function carnetFiltreGroupe(lignes, code) {
+  const c = String(code || "").toUpperCase();
+  if (!c) return [];
+  return (lignes || []).filter(r => String(r && r.classe_code || "").toUpperCase() === c);
+}
 
 function joursDepuis(iso) {
   if (!iso) return Infinity;
@@ -311,8 +339,21 @@ function dateRelative(iso) {
   return `il y a ${j} jours`;
 }
 
-let cache = { org: null, classes: [], view: "classes", classe: null, eleves: [], prog: [],
-  carnet: [], carnetHeures: [], carnetSel: null, carnetPhotos: {}, carnetActif: false, carnetMsg: "" };
+/* `carnetDispo`   : la table existe et est lisible (le temps réel a un sens).
+   `carnetActif`   : il y a de quoi afficher la section StageQuest.
+   `carnetBrouillons` : le commentaire en cours de frappe, par réalisation. Il
+      vit dans le cache et non dans le DOM, pour qu'une arrivée en temps réel
+      (qui redessine la page) n'efface jamais ce que l'enseignant écrit.
+   `carnetNouveaux` : les réalisations arrivées pendant cette session — mises en
+      évidence, pour qu'on les voie apparaître sur un écran projeté.
+   `rtEtat`        : "off" | "lien" (connexion) | "on" (temps réel) | "repli". */
+function cacheVide() {
+  return { org: null, classes: [], view: "classes", classe: null, eleves: [], prog: [],
+    carnet: [], carnetHeures: [], carnetSel: null, carnetPhotos: {}, carnetActif: false,
+    carnetMsg: "", carnetDispo: false, carnetBrouillons: {}, carnetNouveaux: [],
+    carnetChannel: null, rtEtat: "off" };
+}
+let cache = cacheVide();
 
 /* ------------------ Consentement Loi 25 (version légère) ------------------
    Le courriel de l'enseignant est un renseignement personnel. Plutôt qu'une case à
@@ -377,6 +418,10 @@ function renderLogin(message) {
    (demo_dashboard) qui ne renvoient QUE les organisations marquées is_demo = true —
    jamais de donnée réelle. Lecture seule, aucun login, clé publiable uniquement. */
 async function enterDemo() {
+  // Repart d'un cache propre : pas de StageQuest d'une session réelle qui
+  // traînerait dans la démo, pas d'abonnement temps réel orphelin.
+  carnetRealtimeStop();
+  cache = cacheVide();
   cache.demo = true;
   root.innerHTML = `<div class="loading">Chargement de la démonstration…</div>`;
   // On appelle la RPC avec la clé anonyme en fetch brut, SANS passer par supabase-js :
@@ -419,8 +464,84 @@ async function enterDemo() {
 }
 
 function exitDemo() {
-  cache = { org: null, classes: [], view: "classes", classe: null, eleves: [], prog: [] };
+  carnetRealtimeStop();          // pas d'abonnement orphelin derrière la démo
+  cache = cacheVide();
   renderLogin();
+}
+
+/* ------------------ Lien profond vers un groupe ------------------
+   https://prof.questedu.ca/?groupe=<CODE_CLASSE>&vue=carnet
+
+   Sert la présentation : un lien cliquable dans le PowerPoint ouvre
+   directement la vue StageQuest du groupe, sans deux clics devant la salle.
+   `?vue=carnet` ouvre StageQuest ; toute autre valeur (ou son absence) ouvre
+   simplement le groupe.
+
+   ⚠️ CE PARAMÈTRE SÉLECTIONNE, IL N'AUTORISE PAS.
+   On ne cherche le code QUE dans `cache.classes`, qui vient d'un SELECT déjà
+   cadré par la RLS (`mon_organisation()`). Le groupe d'un autre centre n'y est
+   donc jamais, et le paramètre ne peut pas l'y faire entrer. Et quand le code
+   est introuvable, ON NE DIT RIEN : un message « ce groupe n'existe pas »
+   confirmerait, par différence, l'existence du code d'un autre centre. On
+   ignore le paramètre et on reste à l'accueil, exactement comme sans lien.
+
+   `?demo=1` reste prioritaire (voir le démarrage, en bas de fichier).
+
+   Survie à l'aller-retour du lien magique : `emailRedirectTo` conserve déjà la
+   query (`window.location.href.split("#")[0]`), mais la liste d'URL autorisées
+   de Supabase peut la réécrire, et le courriel ouvre souvent un NOUVEL onglet
+   (donc pas de sessionStorage). On met donc le lien de côté dans
+   `localStorage`, avec une durée de vie de 30 minutes et consommation unique :
+   un lien oublié ne détourne pas une visite normale du lendemain. Rien de
+   sensible là-dedans — un code de classe, que l'enseignant a déjà. */
+const LIEN_KEY = "qe_lien_profond";
+const LIEN_TTL_MS = 30 * 60 * 1000;
+
+function lienProfondDeLUrl() {
+  const p = new URLSearchParams(location.search);
+  const groupe = String(p.get("groupe") || "").trim().toUpperCase().slice(0, 12);
+  if (!groupe) return null;
+  return { groupe, vue: String(p.get("vue") || "").trim().toLowerCase() === "carnet" ? "carnet" : "cohort" };
+}
+function lienProfondMemoriser(l) {
+  try { localStorage.setItem(LIEN_KEY, JSON.stringify({ g: l.groupe, v: l.vue, t: Date.now() })); } catch (_) {}
+}
+function lienProfondReprendre() {
+  try {
+    const brut = localStorage.getItem(LIEN_KEY);
+    localStorage.removeItem(LIEN_KEY);              // consommation unique
+    if (!brut) return null;
+    const o = JSON.parse(brut);
+    if (!o || !o.g || !(Date.now() - Number(o.t) < LIEN_TTL_MS)) return null;
+    return { groupe: String(o.g).toUpperCase().slice(0, 12), vue: o.v === "carnet" ? "carnet" : "cohort" };
+  } catch (_) { return null; }
+}
+function lienProfondNettoyerUrl() {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete("groupe");
+    u.searchParams.delete("vue");
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+  } catch (_) {}
+}
+
+/* Appliqué une seule fois, après le chargement des groupes. Renvoie true si le
+   groupe a été ouvert, false dans TOUS les autres cas — sans message. */
+async function appliquerLienProfond() {
+  const l = lienProfondEnAttente;
+  lienProfondEnAttente = null;            // consommé, quoi qu'il arrive
+  if (!l || cache.demo) return false;
+  const classe = (cache.classes || []).find(
+    (c) => String(c.code_classe || "").toUpperCase() === l.groupe
+  );
+  if (!classe) return false;              // inconnu ou hors organisation : silence
+  await openClass(classe);
+  if (l.vue === "carnet" && cache.carnetActif) {
+    cache.view = "carnet";
+    cache.carnetMsg = "";
+    render();
+  }
+  return true;
 }
 
 /* ------------------ Chargement des données ------------------ */
@@ -440,6 +561,9 @@ async function loadDashboard() {
   cache.classes = classes || [];
   cache.view = "classes";
   render();
+  // Lien profond du PowerPoint : on ouvre le groupe demandé, s'il appartient
+  // bien à cette organisation. Sinon on ne bouge pas et on ne dit rien.
+  if (lienProfondEnAttente && await appliquerLienProfond()) lienProfondNettoyerUrl();
 }
 
 async function openClass(classe) {
@@ -464,6 +588,11 @@ async function openClass(classe) {
   cache.classe = classe; cache.eleves = eleves || []; cache.prog = prog; cache.view = "cohort";
   await loadCarnet(classe);
   render();
+  // Le temps réel est rattaché au GROUPE ouvert, pas à la vue : le compteur
+  // « à traiter » de la pastille et du tableau doit rester juste même quand
+  // l'enseignant n'est pas dans la vue StageQuest. Il est remplacé à chaque
+  // changement de groupe et coupé à la déconnexion.
+  carnetRealtimeStart(classe);
 }
 
 /* ------------------ Carnet de stage : lecture ------------------
@@ -479,6 +608,7 @@ async function openClass(classe) {
 async function loadCarnet(classe) {
   cache.carnet = []; cache.carnetHeures = []; cache.carnetSel = null;
   cache.carnetPhotos = {}; cache.carnetActif = false; cache.carnetMsg = "";
+  cache.carnetDispo = false; cache.carnetBrouillons = {}; cache.carnetNouveaux = [];
   if (cache.demo) return;                       // la démo n'a pas de carnet semé
   const code = classe && classe.code_classe;
   if (!code) return;
@@ -488,7 +618,8 @@ async function loadCarnet(classe) {
     .eq("classe_code", code.toUpperCase())
     .order("cree_le", { ascending: false });
   if (error) return;                            // table absente ou RLS : carnet masqué
-  cache.carnet = data || [];
+  cache.carnetDispo = true;                     // table lisible : l'abonnement temps réel a un sens
+  cache.carnet = carnetFiltreGroupe(data, code);
   // On n'affiche la section que s'il y a quelque chose dedans. Un centre sans
   // l'option ne peut avoir AUCUNE ligne (carnet_soumettre la refuse côté
   // serveur) : il ne découvre donc pas une fonction qu'il n'a pas achetée.
@@ -496,9 +627,9 @@ async function loadCarnet(classe) {
   if (!cache.carnetActif) return;
   const { data: h } = await supabase
     .from("carnet_heures")
-    .select("appareil_id,eleve_nom,eleve_totem,total_heures,objectif_heures,maj_le")
+    .select(CARNET_COLONNES_HEURES)
     .eq("classe_code", code.toUpperCase());
-  cache.carnetHeures = h || [];
+  cache.carnetHeures = carnetFiltreGroupe(h, code);
 }
 
 /* La photo n'est tirée qu'à la demande, une à la fois, et mise en cache pour la
@@ -512,6 +643,230 @@ async function loadCarnetPhoto(id) {
   render();
 }
 
+/* ==================================================================
+   TEMPS RÉEL — les réalisations arrivent toutes seules
+   ==================================================================
+   Pourquoi le temps réel marche ICI et pas côté élève :
+   Supabase Realtime ne livre un changement à un abonné que si la policy
+   `select` de la table l'autorise pour le rôle de son jeton. L'enseignant est
+   authentifié et possède `carnet_lecture_enseignant` : il reçoit, cadré à son
+   organisation. L'élève est `anon`, qui n'a AUCUN privilège sur la table et
+   aucune policy : un abonnement anonyme ne lui livrerait rien — et il ne faut
+   surtout pas lui en accorder un, la clé publiable étant dans le code source
+   de la PWA. L'élève est servi autrement (voir chantierquest-web/carnet.js).
+
+   TROIS PRINCIPES
+   1. Un événement n'est qu'une SONNETTE. On ne lit aucune donnée du message :
+      on relance un SELECT, qui repasse par la RLS. C'est ce qui garantit qu'une
+      réalisation d'un autre centre ne peut pas apparaître, et ça évite au
+      passage de faire voyager la photo base64 contenue dans le message.
+   2. La relecture est DOUCE : elle ne touche que les données. La réalisation
+      ouverte, la photo déjà chargée, le commentaire en cours de frappe et la
+      position de lecture survivent.
+   3. REPLI SYSTÉMATIQUE. Si l'abonnement ne se confirme pas (SQL de publication
+      non exécuté, websocket bloqué par le pare-feu d'un CFP, session expirée),
+      on passe à une relecture périodique. Le tableau de bord se met à jour tout
+      seul dans tous les cas : c'est ce qui compte un jour de démonstration.
+   ------------------------------------------------------------------ */
+
+/* Les événements arrivent en grappe (un envoi d'élève = 1 INSERT, une décision
+   = 1 UPDATE) : on regroupe les relectures. */
+const CARNET_DEBOUNCE_MS = 400;
+/* Si l'abonnement n'est pas confirmé dans ce délai, on allume le repli. */
+const CARNET_RT_DELAI_MS = 8000;
+/* Repli par relecture périodique : assez vif pour une démonstration projetée,
+   assez lent pour rester invisible sur le réseau d'un centre. */
+const CARNET_REPLI_MS = 25000;
+/* On ne garde pas une liste de « nouveautés » infinie. */
+const CARNET_NOUVEAUX_MAX = 40;
+
+let carnetTimerDebounce = null;
+let carnetTimerRepli = null;
+let carnetTimerAttenteRt = null;
+let carnetRelectureEnCours = false;
+let carnetRelectureRedemandee = false;
+
+function carnetRelireBientot(delai) {
+  if (carnetTimerDebounce) clearTimeout(carnetTimerDebounce);
+  carnetTimerDebounce = setTimeout(() => {
+    carnetTimerDebounce = null;
+    relireCarnet();
+  }, typeof delai === "number" ? delai : CARNET_DEBOUNCE_MS);
+}
+
+/* Signature d'état : sert uniquement à savoir s'il faut redessiner. */
+function carnetSignature(rows, heures) {
+  return (rows || []).map(r => r.id + "|" + r.statut + "|" + (r.commentaire_prof || "") + "|" + (r.decide_le || "")).join(";")
+    + "#" + (heures || []).map(h => h.appareil_id + "|" + h.total_heures + "|" + h.objectif_heures).join(";");
+}
+
+/* RELECTURE DOUCE — même requête que loadCarnet() (même SELECT filtré par la
+   RLS, toujours SANS la colonne `photo`), mais elle ne remplace que les
+   données. */
+async function relireCarnet() {
+  if (cache.demo || !cache.classe || !cache.carnetDispo) return;
+  if (carnetRelectureEnCours) { carnetRelectureRedemandee = true; return; }
+  carnetRelectureEnCours = true;
+  const code = String(cache.classe.code_classe || "").toUpperCase();
+  try {
+    if (!code) return;
+    const { data, error } = await supabase
+      .from("carnet_realisations")
+      .select(CARNET_COLONNES)
+      .eq("classe_code", code)
+      .order("cree_le", { ascending: false });
+    if (error) return;                       // réseau ou RLS : on garde l'affichage actuel
+    // Le groupe a changé pendant l'aller-retour : on jette la réponse.
+    if (!cache.classe || String(cache.classe.code_classe || "").toUpperCase() !== code) return;
+
+    const lignes = carnetFiltreGroupe(data, code);
+    const avant = new Set(cache.carnet.map(r => r.id));
+    const nouveaux = lignes.filter(r => !avant.has(r.id)).map(r => r.id);
+
+    const { data: h } = await supabase
+      .from("carnet_heures")
+      .select(CARNET_COLONNES_HEURES)
+      .eq("classe_code", code);
+    if (!cache.classe || String(cache.classe.code_classe || "").toUpperCase() !== code) return;
+    const heures = Array.isArray(h) ? carnetFiltreGroupe(h, code) : cache.carnetHeures;
+
+    const avantSig = carnetSignature(cache.carnet, cache.carnetHeures);
+    cache.carnet = lignes;
+    cache.carnetHeures = heures;
+    // La section apparaît d'elle-même à la première réalisation : un groupe
+    // encore vide au début d'une démonstration n'oblige pas à recharger.
+    if (lignes.length > 0) cache.carnetActif = true;
+    if (nouveaux.length) {
+      cache.carnetNouveaux = nouveaux.concat(cache.carnetNouveaux).slice(0, CARNET_NOUVEAUX_MAX);
+    }
+    if (carnetSignature(lignes, heures) !== avantSig) render(true);
+  } catch (e) {
+    /* hors ligne : on réessaiera au retour du réseau */
+  } finally {
+    carnetRelectureEnCours = false;
+    if (carnetRelectureRedemandee) { carnetRelectureRedemandee = false; carnetRelireBientot(200); }
+  }
+}
+
+/* UN ÉVÉNEMENT N'EST QU'UNE SONNETTE : aucune donnée du message n'est lue. */
+function carnetEvenement(codeAbonne, payload) {
+  if (!cache.classe) return;
+  const codeOuvert = String(cache.classe.code_classe || "").toUpperCase();
+  if (!codeOuvert || codeOuvert !== String(codeAbonne).toUpperCase()) return;  // canal d'un groupe refermé
+
+  const ligne = (payload && (payload.new || payload.old)) || null;
+  const codeEvt = ligne && ligne.classe_code ? String(ligne.classe_code).toUpperCase() : "";
+  // Le message porte un code de classe qui n'est PAS celui du groupe ouvert :
+  // on le jette sans même relire. (Ne devrait jamais arriver : filtre serveur
+  // + RLS. C'est la bretelle.)
+  if (codeEvt && codeEvt !== codeOuvert) return;
+  // Code absent (DELETE, ou message tronqué par Realtime si la ligne dépasse sa
+  // taille maximale) : on relit quand même, sans risque — la relecture est
+  // bornée au groupe ouvert et refiltrée par la RLS.
+  carnetRelireBientot();
+}
+
+function carnetRepliStart() {
+  if (carnetTimerRepli) return;
+  if (cache.rtEtat !== "on") cache.rtEtat = "repli";
+  carnetTimerRepli = setInterval(() => {
+    if (cache.demo || !cache.classe || !cache.carnetDispo) { carnetRepliStop(); return; }
+    if (document.visibilityState !== "visible") return;   // onglet caché : on se tait
+    relireCarnet();
+  }, CARNET_REPLI_MS);
+}
+function carnetRepliStop() {
+  if (carnetTimerRepli) { clearInterval(carnetTimerRepli); carnetTimerRepli = null; }
+}
+
+/* DÉSABONNEMENT — appelé au changement de groupe, à la déconnexion, à la sortie
+   de la démo et quand la page est mise de côté. Coupe aussi les minuteries :
+   pas de relecture fantôme derrière un enseignant déconnecté. */
+function carnetRealtimeStop() {
+  if (carnetTimerAttenteRt) { clearTimeout(carnetTimerAttenteRt); carnetTimerAttenteRt = null; }
+  if (carnetTimerDebounce) { clearTimeout(carnetTimerDebounce); carnetTimerDebounce = null; }
+  carnetRepliStop();
+  const ch = cache.carnetChannel;
+  cache.carnetChannel = null;
+  cache.rtEtat = "off";
+  if (ch) { try { supabase.removeChannel(ch); } catch (e) {} }
+}
+
+async function carnetRealtimeStart(classe) {
+  carnetRealtimeStop();
+  if (cache.demo) return;                                   // la démo n'a pas de carnet
+  if (!classe || !classe.code_classe || !cache.carnetDispo) return;
+  const code = String(classe.code_classe).toUpperCase();
+
+  // Realtime diffuse SELON LES POLICIES DE LECTURE : il lui faut le jeton de la
+  // session. Sans jeton il retomberait sur le rôle `anon`, qui n'a aucun
+  // privilège sur la table — donc zéro événement. C'est exactement la barrière
+  // qui protège l'app élève, et on ne la contourne pas : on s'authentifie.
+  let jeton = "";
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    jeton = (sess && sess.session && sess.session.access_token) || "";
+  } catch (e) { jeton = ""; }
+  if (!jeton) { carnetRepliStart(); if (cache.classe) render(true); return; }
+  try {
+    const r = supabase.realtime.setAuth(jeton);
+    if (r && typeof r.then === "function") await r;
+  } catch (e) { /* versions anciennes du client : setAuth synchrone ou absent */ }
+
+  // Le groupe a pu changer pendant l'await.
+  if (!cache.classe || String(cache.classe.code_classe || "").toUpperCase() !== code) return;
+
+  cache.rtEtat = "lien";
+  let ch = null;
+  try {
+    ch = supabase
+      .channel("stagequest-" + code + "-" + Date.now())
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "carnet_realisations", filter: "classe_code=eq." + code },
+          (payload) => carnetEvenement(code, payload))
+      .subscribe((statut) => {
+        if (statut === "SUBSCRIBED") {
+          cache.rtEtat = "on";
+          carnetRepliStop();
+          if (carnetTimerAttenteRt) { clearTimeout(carnetTimerAttenteRt); carnetTimerAttenteRt = null; }
+          // RATTRAPAGE. À la première connexion comme après une coupure réseau,
+          // les changements survenus pendant le trou ne sont jamais rejoués par
+          // Realtime : on relit une fois, tout de suite, pour repartir juste.
+          carnetRelireBientot(0);
+          if (cache.classe) render(true);
+        } else if (statut === "CHANNEL_ERROR" || statut === "TIMED_OUT" || statut === "CLOSED") {
+          // Coupure ou refus. Le client Supabase retente la connexion de son
+          // côté ; en attendant, la relecture périodique prend le relais.
+          if (cache.rtEtat !== "off") { cache.rtEtat = "repli"; carnetRepliStart(); }
+          if (cache.classe) render(true);
+        }
+      });
+  } catch (e) {
+    carnetRepliStart();
+    return;
+  }
+  cache.carnetChannel = ch;
+
+  // Ceinture et bretelles : abonnement non confirmé au bout de 8 s → repli.
+  carnetTimerAttenteRt = setTimeout(() => {
+    carnetTimerAttenteRt = null;
+    if (cache.rtEtat !== "on") { carnetRepliStart(); if (cache.classe) render(true); }
+  }, CARNET_RT_DELAI_MS);
+}
+
+/* RECONNEXION — au retour au premier plan et au retour du réseau. Un canal peut
+   être mort sans que personne ne l'ait annoncé (veille de l'écran, bascule de
+   Wi-Fi) : on le refait à neuf, sinon on relit simplement par sécurité. */
+function carnetRealtimeCheck() {
+  if (cache.demo || !cache.classe || !cache.carnetDispo) return;
+  if (document.visibilityState !== "visible") return;
+  const ch = cache.carnetChannel;
+  const etat = ch && typeof ch.state === "string" ? ch.state : "";
+  if (etat !== "joined" && etat !== "joining") { carnetRealtimeStart(cache.classe); return; }
+  carnetRelireBientot(150);
+}
+
+
 /* LA DÉCISION DE L'ENSEIGNANT.
    Un simple UPDATE : la RLS vérifie que la réalisation appartient bien à une de
    ses classes, et les privilèges de COLONNE font que seules `statut` et
@@ -519,8 +874,11 @@ async function loadCarnetPhoto(id) {
    sont hors d'atteinte, Postgres refuserait. `decide_par` et `decide_le` sont
    posés par le trigger côté serveur, jamais par ce code. */
 async function decideCarnet(id, statut) {
+  // Le brouillon du cache fait foi si le champ n'est plus dans le DOM (une
+  // relecture temps réel a pu redessiner la page entre-temps).
   const champ = document.getElementById("carnetComm-" + id);
-  const commentaire = champ ? champ.value.trim().slice(0, 500) : "";
+  const brut = champ ? champ.value : (cache.carnetBrouillons[id] || "");
+  const commentaire = String(brut || "").trim().slice(0, 500);
   if (statut === "refaire" && !commentaire) {
     cache.carnetMsg = "Écris un commentaire avant de renvoyer le geste : c'est ce que l'élève verra dans son app.";
     render();
@@ -538,6 +896,8 @@ async function decideCarnet(id, statut) {
   }
   const r = cache.carnet.find(x => x.id === id);
   if (r) { r.statut = statut; r.commentaire_prof = commentaire || null; r.decide_le = new Date().toISOString(); r.decide_par = cache.userEmail || ""; }
+  delete cache.carnetBrouillons[id];
+  cache.carnetNouveaux = cache.carnetNouveaux.filter(x => x !== id);
   cache.carnetSel = null;
   render();
 }
@@ -662,6 +1022,9 @@ function renderCarnetView() {
   const carte = (r) => {
     const st = CARNET_STATUT[r.statut] || CARNET_STATUT.attente;
     const ouvert = cache.carnetSel === r.id;
+    // Arrivée pendant cette session : mise en évidence, pour qu'on la voie
+    // apparaître sur un écran projeté sans avoir à la chercher.
+    const neuf = cache.carnetNouveaux.indexOf(r.id) !== -1;
     const photo = cache.carnetPhotos[r.id];
     const h = carnetHeuresDe(r.appareil_id);
     const bloc = photo === undefined
@@ -672,11 +1035,11 @@ function renderCarnetView() {
           ? `<img class="cphoto" src="${esc(photo)}" alt="Photo du travail de ${esc(carnetNomEleve(r))}" />`
           : `<div class="cphoto-load">Aucune photo n'a été joint à cette réalisation.</div>`;
     return `
-      <article class="ccase ${ouvert ? "open" : ""}">
+      <article class="ccase ${ouvert ? "open" : ""}${neuf ? " cneuf" : ""}">
         <div class="ccase-head" data-carnet-open="${r.id}">
           <span class="em">${emojiFor(r.eleve_totem)}</span>
           <div class="ccase-id">
-            <b>${esc(gesteTitle(r.geste_id, r.geste_nom))}</b>
+            <b>${esc(gesteTitle(r.geste_id, r.geste_nom))}${gesteEstLibre(r.geste_id) ? ` <span class="clibre-tag" title="Geste que l'élève a écrit lui-même : il ne figure pas dans la liste et ne débloque pas de badge dans son app.">écrit par l'élève</span>` : ""}${neuf ? ` <span class="cneuf-tag">nouveau</span>` : ""}</b>
             <span>${esc(carnetNomEleve(r))}${r.employeur ? " · " + esc(r.employeur) : ""}${r.engin ? " · " + esc(r.engin) : ""}</span>
           </div>
           <span class="pill ${st.c}">${st.t}</span>
@@ -691,7 +1054,7 @@ function renderCarnetView() {
           </div>
           ${r.statut === "attente" ? `
             <label for="carnetComm-${r.id}">Commentaire pour l'élève</label>
-            <textarea id="carnetComm-${r.id}" maxlength="500" placeholder="Ex. : belle tranchée, surveille ta pente la prochaine fois."></textarea>
+            <textarea id="carnetComm-${r.id}" data-carnet-comm="${r.id}" maxlength="500" placeholder="Ex. : belle tranchée, surveille ta pente la prochaine fois.">${esc(cache.carnetBrouillons[r.id] || "")}</textarea>
             <div class="cactions">
               <button class="cbtn ok" data-carnet-ok="${r.id}">✓ Validé</button>
               <button class="cbtn redo" data-carnet-redo="${r.id}">↩ À refaire</button>
@@ -710,11 +1073,26 @@ function renderCarnetView() {
 
   const liste = (arr, vide) => arr.length ? arr.map(carte).join("") : `<div class="empty">${vide}</div>`;
 
+  // Témoin d'état : l'enseignant doit pouvoir dire d'un coup d'œil si la page
+  // se met à jour toute seule — surtout quand elle est projetée.
+  const etatLive = cache.rtEtat === "on"
+    ? { c:"on",    t:"● En direct",
+        aide:"Les nouvelles réalisations apparaissent d'elles-mêmes, sans recharger la page." }
+    : cache.rtEtat === "repli"
+      ? { c:"repli", t:"◍ Mise à jour automatique",
+          aide:"Le direct n'est pas disponible sur ce réseau : la liste se relit toute seule toutes les 25 secondes." }
+      : { c:"",      t:"◌ Connexion…",
+          aide:"Mise en place de la mise à jour automatique." };
+
   return shell(`${cache.org.nom} › ${c.nom} › <b>${CARNET_NOM}</b>`, `
     <div class="view">
       <button class="back" data-nav="cohort">← Retour au groupe</button>
       <h1>${CARNET_NOM}</h1>
       <p class="subtitle">${c.nom} · les gestes du métier que tes élèves photographient en stage.</p>
+      <div class="clive-bar">
+        <span class="clive ${etatLive.c}" title="${etatLive.aide}">${etatLive.t}</span>
+        <button class="crelire" data-carnet-relire title="Relit la liste maintenant, sans recharger la page">↻ Actualiser</button>
+      </div>
       ${cache.carnetMsg ? `<div class="cmsg">${esc(cache.carnetMsg)}</div>` : ""}
       <div class="kpis">
         <div class="kpi ${attente.length?'alert':''}"><u>À traiter</u><strong>${attente.length}</strong></div>
@@ -726,7 +1104,7 @@ function renderCarnetView() {
       <div class="clist">${liste(attente, "Rien à traiter pour l'instant. Les réalisations arrivent ici dès qu'un élève en envoie une.")}</div>
       <h2 class="csec">Déjà traitées</h2>
       <div class="clist">${liste(traitees, "Aucune réalisation traitée pour l'instant.")}</div>
-      <p class="note">Touche une réalisation pour voir la photo et décider. Tu ne peux pas modifier la photo, la note ni le geste de l'élève — seulement le statut et ton commentaire. L'élève reçoit le résultat dans son app au prochain lancement.</p>
+      <p class="note">Touche une réalisation pour voir la photo et décider. Tu ne peux pas modifier la photo, la note ni le geste de l'élève — seulement le statut et ton commentaire. L'élève voit ta décision dans son app dès qu'il y revient, ou en quelques secondes s'il a son carnet ouvert.</p>
     </div>`);
 }
 
@@ -759,7 +1137,18 @@ function renderStudent(eleve) {
     </div>`);
 }
 
-function render() {
+/* `doux` = ce redessin vient d'une mise à jour automatique, pas d'un clic de
+   l'enseignant. On lui rend alors sa position de lecture et son curseur : une
+   réalisation qui arrive ne doit jamais faire sauter la page ni sortir du champ
+   de commentaire en cours de frappe. Un render() normal se comporte comme
+   avant — aucun changement pour la navigation existante. */
+function render(doux) {
+  const actif = doux ? document.activeElement : null;
+  const focus = actif && typeof actif.id === "string" && actif.id.indexOf("carnetComm-") === 0
+    ? { id: actif.id, d: actif.selectionStart, f: actif.selectionEnd }
+    : null;
+  const defil = doux ? window.scrollY : null;
+
   let html;
   if (cache.view === "classes") html = renderClasses();
   else if (cache.view === "student") html = renderStudent(cache.currentEleve);
@@ -798,9 +1187,28 @@ function render() {
     cache.view = "student"; render();
   }));
   const so = root.querySelector("[data-signout]");
-  if (so) so.addEventListener("click", async () => { await supabase.auth.signOut(); location.reload(); });
+  if (so) so.addEventListener("click", async () => { carnetRealtimeStop(); await supabase.auth.signOut(); location.reload(); });
   const ex = root.querySelector("[data-exitdemo]");
   if (ex) ex.addEventListener("click", exitDemo);
+
+  // Le commentaire en cours de frappe est tenu dans le cache, pas dans le DOM :
+  // c'est ce qui le fait survivre à un redessin déclenché par le temps réel.
+  root.querySelectorAll("[data-carnet-comm]").forEach(el => {
+    el.addEventListener("input", () => { cache.carnetBrouillons[el.dataset.carnetComm] = el.value; });
+  });
+  // Échappatoire manuelle : relit la liste sans recharger la page (donc sans
+  // perdre la photo déjà chargée ni le commentaire en cours).
+  const rel = root.querySelector("[data-carnet-relire]");
+  if (rel) rel.addEventListener("click", () => { cache.carnetMsg = ""; relireCarnet(); });
+
+  if (typeof defil === "number") window.scrollTo(0, defil);
+  if (focus) {
+    const el = document.getElementById(focus.id);
+    if (el) {
+      try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+      try { el.setSelectionRange(focus.d, focus.f); } catch (e) {}
+    }
+  }
 }
 
 /* ------------------ Démarrage ------------------ */
@@ -809,16 +1217,39 @@ function render() {
 // c'est un outil de présentation, il doit toujours montrer la démo (jamais les vraies données).
 const demoForced = new URLSearchParams(location.search).get("demo") === "1";
 
+/* Résolu TOUT DE SUITE, avant d'enregistrer onAuthStateChange : la session peut
+   apparaître (événement SIGNED_IN du retour de lien magique) avant que le
+   getSession() du démarrage n'ait répondu, et loadDashboard() doit déjà savoir
+   où aller. `?demo=1` prime : aucun lien profond en mode démonstration. */
+var lienProfondEnAttente = demoForced ? null : (lienProfondDeLUrl() || lienProfondReprendre());
+
 supabase.auth.onAuthStateChange((_event, session) => {
   if (demoForced) return;                // démo forcée : ne jamais charger le vrai tableau de bord
   if (session) { cache.demo = false; cache.userEmail = session.user.email; loadDashboard(); }
-  else if (!cache.demo) renderLogin();   // en mode démo, ne pas revenir à l'écran de connexion
+  else if (!cache.demo) { carnetRealtimeStop(); renderLogin(); }   // en mode démo, ne pas revenir à l'écran de connexion
 });
+
+/* ------------------ Reprise après veille / coupure réseau ------------------
+   Realtime se reconnecte de lui-même, mais il ne rejoue PAS les changements
+   survenus pendant le trou. On vérifie donc l'abonnement et on relit une fois
+   au retour au premier plan, au retour du réseau et au retour du focus. */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") carnetRealtimeCheck();
+});
+window.addEventListener("focus", carnetRealtimeCheck);
+window.addEventListener("online", carnetRealtimeCheck);
+// Page mise de côté (onglet fermé, retour à l'écran d'accueil) : on coupe tout.
+window.addEventListener("pagehide", carnetRealtimeStop);
 
 (async () => {
   // Accès démo direct par lien : prof.questedu.ca/?demo=1 (aucune connexion requise, priorité sur la session).
   if (demoForced) { enterDemo(); return; }
   const { data } = await supabase.auth.getSession();
   if (data.session) { cache.userEmail = data.session.user.email; loadDashboard(); }
-  else renderLogin();
+  else {
+    // Pas encore connecté : le lien profond est mis de côté pour qu'il survive
+    // à l'aller-retour du lien magique (souvent dans un autre onglet).
+    if (lienProfondEnAttente) { lienProfondMemoriser(lienProfondEnAttente); lienProfondEnAttente = null; }
+    renderLogin();
+  }
 })();
