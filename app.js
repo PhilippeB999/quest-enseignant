@@ -1398,8 +1398,8 @@ function shell(crumbs, body) {
     ? `<div class="demo-banner">🔍 <b>Mode démonstration</b> — données fictives. Aucune donnée réelle d'élève.</div>`
     : "";
   return `
-  <div class="app">
-    <aside class="side">
+  <div class="app${cache.menuOuvert ? " menu-ouvert" : ""}">
+    <aside class="side" id="menuLateral">
       <div class="brand"><span class="mk">🛡️</span><span><b>Quest</b><small>ESPACE ENSEIGNANT</small></span></div>
       <div class="navlbl">Mes groupes</div>
       <button class="nav ${cache.view==='classes'?'on':''}" data-nav="classes">▦ Vue d'ensemble</button>
@@ -1411,6 +1411,7 @@ function shell(crumbs, body) {
     <div class="main">
       ${demoBanner}
       <div class="top">
+        <button class="menu-btn" data-menu aria-controls="menuLateral" aria-expanded="${cache.menuOuvert ? "true" : "false"}">${cache.menuOuvert ? "✕ Fermer" : "☰ Menu"}</button>
         <div class="crumbs">${crumbs}</div>
         <div class="lic"><span class="dot"></span><em>Licence jusqu'au</em> <b>${licDate}</b></div>
       </div>
@@ -1662,6 +1663,9 @@ function render(doux) {
     cache.view = "student"; render();
   }));
   msgBind();   // messagerie
+  // Écran étroit : le bouton ☰ ouvre / ferme la barre latérale (masquée sous 760 px).
+  const mb = root.querySelector("[data-menu]");
+  if (mb) mb.addEventListener("click", () => { cache.menuOuvert = !cache.menuOuvert; render(); });
   const so = root.querySelector("[data-signout]");
   if (so) so.addEventListener("click", async () => { carnetRealtimeStop(); msgRealtimeStop(); await supabase.auth.signOut(); location.reload(); });
   const ex = root.querySelector("[data-exitdemo]");
@@ -1686,6 +1690,13 @@ function render(doux) {
     }
   }
 }
+
+/* Menu sur écran étroit : un choix dans la barre latérale la referme. Écouteur
+   en phase de CAPTURE sur #root, donc exécuté AVANT le gestionnaire du bouton
+   (qui redessine la page) : le nouveau rendu part menu fermé. */
+root.addEventListener("click", (ev) => {
+  if (cache.menuOuvert && ev.target && ev.target.closest && ev.target.closest(".side button")) cache.menuOuvert = false;
+}, true);
 
 /* ------------------ Démarrage ------------------ */
 
