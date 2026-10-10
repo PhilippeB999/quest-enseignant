@@ -421,6 +421,7 @@ async function enterDemo() {
   // Repart d'un cache propre : pas de StageQuest d'une session réelle qui
   // traînerait dans la démo, pas d'abonnement temps réel orphelin.
   carnetRealtimeStop();
+  msgRealtimeStop();             // messagerie : pas de canal orphelin derrière la démo
   cache = cacheVide();
   cache.demo = true;
   root.innerHTML = `<div class="loading">Chargement de la démonstration…</div>`;
@@ -465,6 +466,7 @@ async function enterDemo() {
 
 function exitDemo() {
   carnetRealtimeStop();          // pas d'abonnement orphelin derrière la démo
+  msgRealtimeStop();
   cache = cacheVide();
   renderLogin();
 }
@@ -587,12 +589,14 @@ async function openClass(classe) {
   }
   cache.classe = classe; cache.eleves = eleves || []; cache.prog = prog; cache.view = "cohort";
   await loadCarnet(classe);
+  await loadMessages(classe);    // messagerie (tableau de bord de base, indépendante du carnet)
   render();
   // Le temps réel est rattaché au GROUPE ouvert, pas à la vue : le compteur
   // « à traiter » de la pastille et du tableau doit rester juste même quand
   // l'enseignant n'est pas dans la vue StageQuest. Il est remplacé à chaque
   // changement de groupe et coupé à la déconnexion.
   carnetRealtimeStart(classe);
+  msgRealtimeStart(classe);      // canal SÉPARÉ de celui du carnet
 }
 
 /* ------------------ Carnet de stage : lecture ------------------
@@ -916,6 +920,471 @@ function statsEleve(eleveId) {
   return { niveauxReussis: reussis.length, modulesMaitrises: maitrises.size, rows };
 }
 
+/* ==================================================================
+   MESSAGERIE ENSEIGNANT → ÉLÈVE (sens unique) — tableau de bord de BASE
+   ==================================================================
+   Fait partie du tableau de bord pour TOUTES les licences. Totalement
+   indépendante du carnet de stage : autres tables, autres fonctions, aucune
+   option de licence, aucune variable partagée avec le code StageQuest.
+   SQL : supabase_messagerie.sql (à la racine de ce dépôt).
+
+   · L'enseignant écrit à UN élève (son totem) ou à TOUTE la classe : message
+     rapide ou texte libre de 280 caractères au plus (borne aussi en base).
+   · L'élève ne répond pas par écrit : il accuse (👍 Compris / ✋ J'en parle
+     en classe). On affiche l'état : non lu / lu / accusé, avec la date.
+   · Tous les enseignants de la même organisation voient tous les messages,
+     avec l'auteur. Voulu : aucun canal privé caché entre un adulte et un
+     mineur. Le courriel de l'auteur n'est JAMAIS montré à l'élève.
+
+   LECTURE / ÉCRITURE : directement sur les tables, sous RLS (policies
+   `to authenticated` cadrées sur les classes de mon_organisation()), avec
+   un INSERT limité à 5 colonnes. L'auteur et la date sont posés par un
+   trigger côté serveur.
+
+   TEMPS RÉEL : même patron que le carnet, mais code et canal SÉPARÉS. Un
+   événement n'est qu'une sonnette : on relit par un SELECT refiltré par la
+   RLS. Repli automatique en relecture toutes les 30 s.
+
+   ⚠️ ÉCHAPPEMENT : le texte libre, le nom affiché, le courriel de l'auteur ET
+   le totem / l'identifiant de l'élève (envoyés par l'app élève, donc par
+   n'importe qui) passent TOUS par esc() avant d'entrer dans le HTML. */
+
+const MSG_MAX = 280;
+const MSG_RAPIDES = [
+  { id: "bravo",       t: "Bravo, continue!" },
+  { id: "revoir",      t: "Reviens sur ce module" },
+  { id: "voir_classe", t: "Viens me voir en classe" },
+  { id: "progres",     t: "Beau progrès cette semaine" }
+];
+const MSG_ACCUSE = {
+  compris:   { t: "👍 Compris",              c: "ok" },
+  en_classe: { t: "✋ J'en parle en classe", c: "warn" }
+};
+const MSG_SIGNATURE_KEY = "qe_msg_signature";
+const MSG_COLONNES = "id,classe_id,eleve_id,modele,texte,auteur_nom,auteur_courriel,cree_le";
+const MSG_COLONNES_LECT = "message_id,eleve_id,classe_id,lu_le,accuse,accuse_le";
+const MSG_LIMITE = 200;
+const MSG_DEBOUNCE_MS = 400;
+const MSG_RT_DELAI_MS = 8000;
+const MSG_REPLI_MS = 30000;
+
+function msgVide() {
+  return { dispo: false, liste: [], lectures: [], dest: "", brouillon: "", info: "", erreur: "",
+    envoi: false, rt: "off", ouvert: null };
+}
+/* L'état de la messagerie vit dans `cache.msg`, créé à la demande : il suit
+   donc les remises à zéro de `cache` (déconnexion, démo) sans toucher à
+   cacheVide(). */
+function M() { if (!cache.msg) cache.msg = msgVide(); return cache.msg; }
+function msgDispo() { return !cache.demo && !!cache.classe && !!cache.msg && cache.msg.dispo; }
+
+function msgLireSignature() {
+  try { return String(localStorage.getItem(MSG_SIGNATURE_KEY) || "").slice(0, 60); } catch (_) { return ""; }
+}
+function msgEcrireSignature(v) {
+  try { localStorage.setItem(MSG_SIGNATURE_KEY, String(v || "").trim().slice(0, 60)); } catch (_) {}
+}
+
+function msgQuand(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("fr-CA", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function msgEleve(id) { return (cache.eleves || []).find((e) => e.id === id) || null; }
+function msgTotem(id) {
+  const e = msgEleve(id);
+  return e ? e.totem || "Élève" : "Élève retiré du groupe";
+}
+function msgAuteur(m) {
+  if (cache.userEmail && m.auteur_courriel === cache.userEmail) return m.auteur_nom ? `${m.auteur_nom} (toi)` : "Toi";
+  if (m.auteur_nom) return `${m.auteur_nom} · ${m.auteur_courriel || ""}`;
+  return m.auteur_courriel || "Enseignant(e)";
+}
+function msgLecture(messageId, eleveId) {
+  return M().lectures.find((l) => l.message_id === messageId && l.eleve_id === eleveId) || null;
+}
+/* État d'UN élève pour UN message : non lu / lu / accusé. */
+function msgEtat(lect) {
+  if (!lect) return { c: "mut", t: "Non lu" };
+  if (lect.accuse && MSG_ACCUSE[lect.accuse]) {
+    return { c: MSG_ACCUSE[lect.accuse].c, t: `${MSG_ACCUSE[lect.accuse].t} · ${msgQuand(lect.accuse_le)}` };
+  }
+  return { c: "lu", t: `Lu · ${msgQuand(lect.lu_le)}` };
+}
+
+/* ------------------ Lecture (sous RLS) ------------------ */
+
+/* Les accusés sont tirés page par page : une classe de 30 élèves × 200
+   messages de classe dépasserait la limite de 1000 lignes par requête. */
+async function msgLireLectures(classeId, ids) {
+  const out = [];
+  if (!ids.length) return out;
+  for (let de = 0; de < 20000; de += 1000) {
+    const { data, error } = await supabase
+      .from("messages_lectures").select(MSG_COLONNES_LECT)
+      .eq("classe_id", classeId).in("message_id", ids)
+      .order("message_id").order("eleve_id")
+      .range(de, de + 999);
+    if (error) return null;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+/* Renvoie true si les tables sont lisibles (SQL exécuté), false sinon. */
+async function msgLire(classeId) {
+  const { data, error } = await supabase
+    .from("messages_enseignant").select(MSG_COLONNES)
+    .eq("classe_id", classeId)
+    .order("cree_le", { ascending: false })
+    .limit(MSG_LIMITE);
+  if (error) return false;
+  // DEUXIÈME BARRIÈRE : on revalide côté client que chaque ligne est bien du
+  // groupe ouvert, même si la RLS l'a déjà garanti.
+  const liste = (data || []).filter((m) => m && m.classe_id === classeId);
+  const lect = await msgLireLectures(classeId, liste.map((m) => m.id));
+  if (!cache.classe || cache.classe.id !== classeId) return true;   // groupe changé : réponse jetée
+  M().liste = liste;
+  if (lect) M().lectures = lect.filter((l) => l && l.classe_id === classeId);
+  return true;
+}
+
+async function loadMessages(classe) {
+  const garde = cache.msg ? { dest: "", brouillon: cache.msg.brouillon } : null;
+  cache.msg = msgVide();
+  if (garde) cache.msg.brouillon = garde.brouillon;   // un brouillon survit au changement de groupe
+  if (cache.demo || !classe || !classe.id) return;
+  try { cache.msg.dispo = await msgLire(classe.id); }
+  catch (_) { cache.msg.dispo = false; }              // hors ligne / SQL absent : messagerie masquée
+}
+
+/* ------------------ Envoi ------------------ */
+
+async function msgEnvoyer() {
+  const m = M();
+  if (m.envoi || !msgDispo()) return;
+  const champ = document.getElementById("msgTexte");
+  const texte = String(champ ? champ.value : m.brouillon || "").trim();
+  m.brouillon = texte;
+  m.info = ""; m.erreur = "";
+  if (!texte) { m.erreur = "Écris un message ou choisis un message rapide."; render(); return; }
+  if (texte.length > MSG_MAX) { m.erreur = `Le message dépasse ${MSG_MAX} caractères.`; render(); return; }
+  // Le destinataire doit être un élève du groupe OUVERT (la policy le revérifie).
+  const eleve = m.dest ? msgEleve(m.dest) : null;
+  if (m.dest && !eleve) { m.erreur = "Cet élève n'est plus dans le groupe."; m.dest = ""; render(); return; }
+  const rapide = MSG_RAPIDES.find((r) => r.t === texte);
+  const signature = msgLireSignature().trim();
+  const classeId = cache.classe.id;
+  m.envoi = true; render(true);
+  let error = null;
+  try {
+    ({ error } = await supabase.from("messages_enseignant").insert({
+      classe_id: classeId,
+      eleve_id: eleve ? eleve.id : null,
+      modele: rapide ? rapide.id : null,
+      texte,
+      auteur_nom: signature || null
+    }));
+  } catch (e) { error = { message: "réseau indisponible" }; }
+  m.envoi = false;
+  if (error) {
+    m.erreur = "Le message n'a pas pu être envoyé : " + (error.message || "erreur inconnue");
+    render();
+    return;
+  }
+  m.brouillon = "";
+  m.info = eleve ? `Message envoyé à ${eleve.totem || "l'élève"}.` : "Message envoyé à toute la classe.";
+  if (cache.classe && cache.classe.id === classeId) await msgLire(classeId);
+  render();
+}
+
+/* ------------------ Temps réel (sonnette) + repli ------------------ */
+
+let msgChannel = null;
+let msgTimerDebounce = null;
+let msgTimerRepli = null;
+let msgTimerAttente = null;
+let msgRelectureEnCours = false;
+let msgRelectureRedemandee = false;
+
+function msgSignatureEtat() {
+  const m = M();
+  return m.liste.map((x) => x.id).join(",") + "#" +
+    m.lectures.map((l) => `${l.message_id}|${l.eleve_id}|${l.lu_le}|${l.accuse || ""}|${l.accuse_le || ""}`).sort().join(";");
+}
+
+function msgRelireBientot(delai) {
+  if (msgTimerDebounce) clearTimeout(msgTimerDebounce);
+  msgTimerDebounce = setTimeout(() => { msgTimerDebounce = null; msgRelire(); },
+    typeof delai === "number" ? delai : MSG_DEBOUNCE_MS);
+}
+
+async function msgRelire() {
+  if (!msgDispo()) return;
+  if (msgRelectureEnCours) { msgRelectureRedemandee = true; return; }
+  msgRelectureEnCours = true;
+  try {
+    const avant = msgSignatureEtat();
+    await msgLire(cache.classe.id);
+    if (msgDispo() && msgSignatureEtat() !== avant) render(true);
+  } catch (_) {
+    /* hors ligne : on réessaiera */
+  } finally {
+    msgRelectureEnCours = false;
+    if (msgRelectureRedemandee) { msgRelectureRedemandee = false; msgRelireBientot(200); }
+  }
+}
+
+function msgRepliStart() {
+  if (msgTimerRepli) return;
+  if (cache.msg && cache.msg.rt !== "on") cache.msg.rt = "repli";
+  msgTimerRepli = setInterval(() => {
+    if (!msgDispo()) { msgRepliStop(); return; }
+    if (document.visibilityState !== "visible") return;
+    msgRelire();
+  }, MSG_REPLI_MS);
+}
+function msgRepliStop() {
+  if (msgTimerRepli) { clearInterval(msgTimerRepli); msgTimerRepli = null; }
+}
+
+function msgRealtimeStop() {
+  if (msgTimerAttente) { clearTimeout(msgTimerAttente); msgTimerAttente = null; }
+  if (msgTimerDebounce) { clearTimeout(msgTimerDebounce); msgTimerDebounce = null; }
+  msgRepliStop();
+  const ch = msgChannel;
+  msgChannel = null;
+  if (cache.msg) cache.msg.rt = "off";
+  if (ch) { try { supabase.removeChannel(ch); } catch (_) {} }
+}
+
+async function msgRealtimeStart(classe) {
+  msgRealtimeStop();
+  if (!msgDispo() || !classe || !classe.id) return;
+  const classeId = classe.id;
+  let jeton = "";
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    jeton = (sess && sess.session && sess.session.access_token) || "";
+  } catch (_) { jeton = ""; }
+  if (!jeton) { msgRepliStart(); return; }
+  try {
+    const r = supabase.realtime.setAuth(jeton);
+    if (r && typeof r.then === "function") await r;
+  } catch (_) {}
+  if (!cache.classe || cache.classe.id !== classeId || !msgDispo()) return;
+
+  M().rt = "lien";
+  const sonnette = () => {
+    if (!cache.classe || cache.classe.id !== classeId) return;   // canal d'un groupe refermé
+    msgRelireBientot();                                         // aucune donnée du message n'est lue
+  };
+  try {
+    msgChannel = supabase
+      .channel("messagerie-" + classeId + "-" + Date.now())
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "messages_enseignant", filter: "classe_id=eq." + classeId },
+          sonnette)
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "messages_lectures", filter: "classe_id=eq." + classeId },
+          sonnette)
+      .subscribe((statut) => {
+        if (!cache.msg) return;
+        if (statut === "SUBSCRIBED") {
+          cache.msg.rt = "on";
+          msgRepliStop();
+          if (msgTimerAttente) { clearTimeout(msgTimerAttente); msgTimerAttente = null; }
+          msgRelireBientot(0);                                   // rattrapage après coupure
+          if (cache.view === "messages") render(true);
+        } else if (statut === "CHANNEL_ERROR" || statut === "TIMED_OUT" || statut === "CLOSED") {
+          if (cache.msg.rt !== "off") { cache.msg.rt = "repli"; msgRepliStart(); }
+          if (cache.view === "messages") render(true);
+        }
+      });
+  } catch (_) {
+    msgRepliStart();
+    return;
+  }
+  msgTimerAttente = setTimeout(() => {
+    msgTimerAttente = null;
+    if (cache.msg && cache.msg.rt !== "on") { msgRepliStart(); if (cache.view === "messages") render(true); }
+  }, MSG_RT_DELAI_MS);
+}
+
+function msgRealtimeCheck() {
+  if (!msgDispo() || document.visibilityState !== "visible") return;
+  const etat = msgChannel && typeof msgChannel.state === "string" ? msgChannel.state : "";
+  if (etat !== "joined" && etat !== "joining") { msgRealtimeStart(cache.classe); return; }
+  msgRelireBientot(150);
+}
+
+/* ------------------ Rendu ------------------ */
+
+/* Une carte de l'historique. */
+function msgCarteHTML(m) {
+  const pourEleve = !!m.eleve_id;
+  const ouvert = M().ouvert === m.id;
+  let etat;
+  if (pourEleve) {
+    const s = msgEtat(msgLecture(m.id, m.eleve_id));
+    etat = `<span class="pill ${s.c}">${esc(s.t)}</span>`;
+  } else {
+    const eleves = cache.eleves || [];
+    const lect = M().lectures.filter((l) => l.message_id === m.id);
+    const lus = lect.length;
+    const compris = lect.filter((l) => l.accuse === "compris").length;
+    const enClasse = lect.filter((l) => l.accuse === "en_classe").length;
+    etat = `<span class="msg-compte">Lu par <b>${lus}</b> / ${eleves.length} · 👍 <b>${compris}</b> · ✋ <b>${enClasse}</b></span>
+      <button class="msg-detail" data-msg-ouvrir="${esc(m.id)}">${ouvert ? "Masquer" : "Détail"}</button>`;
+  }
+  const detail = !pourEleve && ouvert ? `
+    <div class="msg-detail-liste">
+      ${(cache.eleves || []).length ? (cache.eleves || []).map((e) => {
+        const s = msgEtat(msgLecture(m.id, e.id));
+        return `<div class="msg-detail-l"><span class="em">${emojiFor(e.totem)}</span><b>${esc(e.totem)}</b><span class="pill ${s.c}">${esc(s.t)}</span></div>`;
+      }).join("") : `<div class="msg-detail-l">Aucun élève dans ce groupe.</div>`}
+    </div>` : "";
+  return `
+    <article class="msg-carte">
+      <div class="msg-tete">
+        <span class="msg-dest">${pourEleve
+          ? `<span class="em">${emojiFor(msgTotem(m.eleve_id))}</span> ${esc(msgTotem(m.eleve_id))}`
+          : `👥 Toute la classe`}</span>
+        <span class="msg-quand">${esc(msgQuand(m.cree_le))}</span>
+      </div>
+      <p class="msg-texte">${esc(m.texte)}</p>
+      <div class="msg-pied">
+        <span class="msg-auteur">de ${esc(msgAuteur(m))}</span>
+        <span class="msg-etat">${etat}</span>
+      </div>
+      ${detail}
+    </article>`;
+}
+
+function renderMessagesView() {
+  const c = cache.classe;
+  const m = M();
+  const eleves = (cache.eleves || []).slice().sort((a, b) => String(a.totem || "").localeCompare(String(b.totem || ""), "fr"));
+  if (m.dest && !msgEleve(m.dest)) m.dest = "";
+  const options = [`<option value="">👥 Toute la classe (${eleves.length} élève${eleves.length > 1 ? "s" : ""})</option>`]
+    .concat(eleves.map((e) => `<option value="${esc(e.id)}"${m.dest === e.id ? " selected" : ""}>${emojiFor(e.totem)} ${esc(e.totem)}</option>`))
+    .join("");
+  const restant = MSG_MAX - String(m.brouillon || "").length;
+  const etatLive = m.rt === "on"
+    ? { c: "on", t: "● En direct", aide: "Les accusés des élèves apparaissent d'eux-mêmes." }
+    : m.rt === "repli"
+      ? { c: "repli", t: "◍ Mise à jour automatique", aide: "Le direct n'est pas disponible sur ce réseau : la liste se relit toutes les 30 secondes." }
+      : { c: "", t: "◌ Connexion…", aide: "Mise en place de la mise à jour automatique." };
+
+  return shell(`${esc(cache.org.nom)} › ${esc(c.nom)} › <b>Messages</b>`, `
+    <div class="view">
+      <button class="back" data-nav="cohort">← Retour au groupe</button>
+      <h1>📬 Messages</h1>
+      <p class="subtitle">${esc(c.nom)} · tu écris, l'élève lit. Il ne peut pas répondre par écrit : il choisit « 👍 Compris » ou « ✋ J'en parle en classe ».</p>
+      <div class="clive-bar">
+        <span class="clive ${etatLive.c}" title="${etatLive.aide}">${etatLive.t}</span>
+        <button class="crelire" data-msg-relire title="Relit la liste maintenant">↻ Actualiser</button>
+      </div>
+
+      <section class="msg-compose">
+        <label for="msgDest">Destinataire</label>
+        <select id="msgDest" data-msg-dest>${options}</select>
+        ${eleves.length ? "" : `<p class="msg-aide">Aucun élève n'a encore activé le partage dans ce groupe : un message envoyé maintenant ne sera lu par personne tant qu'aucun élève n'aura rejoint le groupe.</p>`}
+
+        <label>Messages rapides</label>
+        <div class="msg-rapides">
+          ${MSG_RAPIDES.map((r) => `<button type="button" class="msg-rapide${m.brouillon === r.t ? " on" : ""}" data-msg-rapide="${r.id}">${esc(r.t)}</button>`).join("")}
+        </div>
+
+        <label for="msgTexte">Ton message <span class="msg-cpt${restant < 20 ? " bas" : ""}" id="msgCpt">${restant} caractère${restant > 1 ? "s" : ""} restant${restant > 1 ? "s" : ""}</span></label>
+        <textarea id="msgTexte" data-msg-texte maxlength="${MSG_MAX}" placeholder="Ex. : Beau travail sur la prévention des infections. Reviens sur le niveau 2 avant vendredi.">${esc(m.brouillon)}</textarea>
+
+        <label for="msgSignature">Signer comme <span class="msg-facultatif">(facultatif)</span></label>
+        <input id="msgSignature" data-msg-signature type="text" maxlength="60" placeholder="Ex. : Mme Ouellet" value="${esc(msgLireSignature())}" />
+        <p class="msg-aide">L'élève voit ce nom, ou « Ton enseignant(e) » s'il est vide. Ton courriel ne lui est jamais montré. Tes collègues du centre voient tous les messages, avec leur auteur.</p>
+        <p class="msg-aide">⚠️ N'écris aucun renseignement personnel (nom réel, santé, famille) : le message est conservé 12 mois.</p>
+
+        ${m.erreur ? `<div class="cmsg">${esc(m.erreur)}</div>` : ""}
+        ${m.info ? `<div class="msg-ok">${esc(m.info)}</div>` : ""}
+        <button class="cbtn ok" data-msg-envoyer ${m.envoi ? "disabled" : ""}>${m.envoi ? "Envoi…" : "Envoyer"}</button>
+      </section>
+
+      <h2 class="csec">Messages envoyés à ce groupe</h2>
+      <div class="clist">
+        ${m.liste.length ? m.liste.map(msgCarteHTML).join("") : `<div class="empty">Aucun message envoyé à ce groupe pour l'instant.</div>`}
+      </div>
+      <p class="note">« Lu » = l'élève a ouvert ses messages dans son app. Seuls les élèves qui ont activé le partage reçoivent les messages. Les messages et accusés sont effacés après 12 mois.</p>
+    </div>`);
+}
+
+/* Bloc de la fiche élève : ses messages (personnels et de classe) et leur état. */
+function msgFicheHTML(eleve) {
+  if (!msgDispo() || !eleve) return "";
+  const siens = M().liste.filter((m) => !m.eleve_id || m.eleve_id === eleve.id).slice(0, 10);
+  const lignes = siens.length ? siens.map((m) => {
+    const s = msgEtat(msgLecture(m.id, eleve.id));
+    return `<div class="msg-fiche-l">
+      <div class="msg-fiche-t"><span>${m.eleve_id ? "À cet élève" : "👥 À la classe"} · ${esc(msgQuand(m.cree_le))}</span><span class="pill ${s.c}">${esc(s.t)}</span></div>
+      <p class="msg-texte">${esc(m.texte)}</p>
+    </div>`;
+  }).join("") : `<p class="msg-aide">Aucun message pour l'instant.</p>`;
+  return `
+    <section class="msg-fiche">
+      <div class="msg-fiche-h">
+        <h2 class="csec">📬 Messages</h2>
+        <button class="cbtn ghost" data-msg-ecrire="${esc(eleve.id)}">✉️ Écrire à ${esc(eleve.totem)}</button>
+      </div>
+      ${lignes}
+    </section>`;
+}
+
+/* Branche les gestes de la messagerie après chaque render(). */
+function msgBind() {
+  root.querySelectorAll("[data-msg-ecrire]").forEach((el) => el.addEventListener("click", () => {
+    const m = M();
+    m.dest = msgEleve(el.dataset.msgEcrire) ? el.dataset.msgEcrire : "";
+    m.info = ""; m.erreur = "";
+    cache.view = "messages";
+    render();
+    const t = document.getElementById("msgTexte");
+    if (t) t.focus();
+  }));
+  const dest = root.querySelector("[data-msg-dest]");
+  if (dest) dest.addEventListener("change", () => { M().dest = dest.value; M().info = ""; });
+  const texte = root.querySelector("[data-msg-texte]");
+  if (texte) texte.addEventListener("input", () => {
+    M().brouillon = texte.value;
+    const r = MSG_MAX - texte.value.length;
+    const cpt = document.getElementById("msgCpt");
+    if (cpt) { cpt.textContent = `${r} caractère${r > 1 ? "s" : ""} restant${r > 1 ? "s" : ""}`; cpt.classList.toggle("bas", r < 20); }
+    root.querySelectorAll("[data-msg-rapide]").forEach((b) => {
+      const q = MSG_RAPIDES.find((x) => x.id === b.dataset.msgRapide);
+      b.classList.toggle("on", !!q && q.t === texte.value.trim());
+    });
+  });
+  const sig = root.querySelector("[data-msg-signature]");
+  if (sig) sig.addEventListener("input", () => msgEcrireSignature(sig.value));
+  root.querySelectorAll("[data-msg-rapide]").forEach((el) => el.addEventListener("click", () => {
+    const q = MSG_RAPIDES.find((x) => x.id === el.dataset.msgRapide);
+    if (!q) return;
+    M().brouillon = q.t; M().info = ""; M().erreur = "";
+    render();
+    const t = document.getElementById("msgTexte");
+    if (t) { t.focus(); try { t.setSelectionRange(t.value.length, t.value.length); } catch (_) {} }
+  }));
+  const env = root.querySelector("[data-msg-envoyer]");
+  if (env) env.addEventListener("click", msgEnvoyer);
+  const rel = root.querySelector("[data-msg-relire]");
+  if (rel) rel.addEventListener("click", () => { M().info = ""; msgRelire(); });
+  root.querySelectorAll("[data-msg-ouvrir]").forEach((el) => el.addEventListener("click", () => {
+    const m = M();
+    m.ouvert = m.ouvert === el.dataset.msgOuvrir ? null : el.dataset.msgOuvrir;
+    render(true);
+  }));
+}
+
 /* ------------------ Rendu ------------------ */
 
 function shell(crumbs, body) {
@@ -936,6 +1405,7 @@ function shell(crumbs, body) {
       <button class="nav ${cache.view==='classes'?'on':''}" data-nav="classes">▦ Vue d'ensemble</button>
       ${cache.classe ? `<button class="nav ${(cache.view==='cohort'||cache.view==='student')?'on':''}" data-nav="cohort">👥 ${cache.classe.nom}</button>` : ""}
       ${cache.classe && cache.carnetActif ? `<button class="nav ${cache.view==='carnet'?'on':''}" data-nav="carnet">🦺 ${CARNET_NOM}${carnetAttente().length ? ` <span class="navbadge">${carnetAttente().length}</span>` : ""}</button>` : ""}
+      ${cache.classe && msgDispo() ? `<button class="nav ${cache.view==='messages'?'on':''}" data-nav="messages">📬 Messages</button>` : ""}
       ${who}
     </aside>
     <div class="main">
@@ -998,6 +1468,7 @@ function renderCohort() {
         <div class="kpi"><u>Niveaux réussis</u><strong>${totalReussis}</strong></div>
         <div class="kpi"><u>Actifs (7 j)</u><strong>${actifs}</strong></div>
         <div class="kpi ${aRelancer?'alert':''}"><u>À relancer</u><strong>${aRelancer}</strong></div>
+        ${msgDispo() ? `<div class="kpi clic" data-nav="messages"><u>📬 Messages envoyés</u><strong>${M().liste.length}</strong></div>` : ""}
         ${cache.carnetActif ? `<div class="kpi clic ${carnetAttente().length?'alert':''}" data-nav="carnet"><u>${CARNET_NOM} · à traiter</u><strong>${carnetAttente().length}</strong></div>` : ""}
       </div>
       <div class="tablewrap"><table>
@@ -1133,6 +1604,7 @@ function renderStudent(eleve) {
         <div class="stat"><u>Modules maîtrisés</u><b class="num">${s.modulesMaitrises}</b></div>
       </div>
       <div class="mods">${modRows}</div>
+      ${msgFicheHTML(eleve)}
       <p class="note">Chaque pastille est un niveau. Vert = réussi (≥ 70 %), rouge = tenté sans réussir, gris = non tenté. Le chiffre est le meilleur score.</p>
     </div>`);
 }
@@ -1144,7 +1616,8 @@ function renderStudent(eleve) {
    avant — aucun changement pour la navigation existante. */
 function render(doux) {
   const actif = doux ? document.activeElement : null;
-  const focus = actif && typeof actif.id === "string" && actif.id.indexOf("carnetComm-") === 0
+  const focus = actif && typeof actif.id === "string"
+    && (actif.id.indexOf("carnetComm-") === 0 || actif.id === "msgTexte" || actif.id === "msgSignature")
     ? { id: actif.id, d: actif.selectionStart, f: actif.selectionEnd }
     : null;
   const defil = doux ? window.scrollY : null;
@@ -1153,6 +1626,7 @@ function render(doux) {
   if (cache.view === "classes") html = renderClasses();
   else if (cache.view === "student") html = renderStudent(cache.currentEleve);
   else if (cache.view === "carnet" && cache.carnetActif) html = renderCarnetView();
+  else if (cache.view === "messages" && msgDispo()) html = renderMessagesView();
   else html = renderCohort();
   root.innerHTML = html;
 
@@ -1162,6 +1636,7 @@ function render(doux) {
   root.querySelectorAll("[data-nav]").forEach(el => el.addEventListener("click", () => {
     if (el.dataset.nav === "classes") { cache.view = "classes"; render(); }
     else if (el.dataset.nav === "carnet") { cache.view = "carnet"; cache.carnetMsg = ""; render(); }
+    else if (el.dataset.nav === "messages") { cache.view = "messages"; M().info = ""; M().erreur = ""; render(); }
     else { cache.view = "cohort"; render(); }
   }));
   root.querySelectorAll("[data-carnet-open]").forEach(el => el.addEventListener("click", () => {
@@ -1186,8 +1661,9 @@ function render(doux) {
     cache.currentEleve = cache.eleves.find(e => e.id === el.dataset.eleve);
     cache.view = "student"; render();
   }));
+  msgBind();   // messagerie
   const so = root.querySelector("[data-signout]");
-  if (so) so.addEventListener("click", async () => { carnetRealtimeStop(); await supabase.auth.signOut(); location.reload(); });
+  if (so) so.addEventListener("click", async () => { carnetRealtimeStop(); msgRealtimeStop(); await supabase.auth.signOut(); location.reload(); });
   const ex = root.querySelector("[data-exitdemo]");
   if (ex) ex.addEventListener("click", exitDemo);
 
@@ -1226,7 +1702,7 @@ var lienProfondEnAttente = demoForced ? null : (lienProfondDeLUrl() || lienProfo
 supabase.auth.onAuthStateChange((_event, session) => {
   if (demoForced) return;                // démo forcée : ne jamais charger le vrai tableau de bord
   if (session) { cache.demo = false; cache.userEmail = session.user.email; loadDashboard(); }
-  else if (!cache.demo) { carnetRealtimeStop(); renderLogin(); }   // en mode démo, ne pas revenir à l'écran de connexion
+  else if (!cache.demo) { carnetRealtimeStop(); msgRealtimeStop(); renderLogin(); }   // en mode démo, ne pas revenir à l'écran de connexion
 });
 
 /* ------------------ Reprise après veille / coupure réseau ------------------
@@ -1240,6 +1716,13 @@ window.addEventListener("focus", carnetRealtimeCheck);
 window.addEventListener("online", carnetRealtimeCheck);
 // Page mise de côté (onglet fermé, retour à l'écran d'accueil) : on coupe tout.
 window.addEventListener("pagehide", carnetRealtimeStop);
+// Messagerie : mêmes reprises, sur son propre canal.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") msgRealtimeCheck();
+});
+window.addEventListener("focus", msgRealtimeCheck);
+window.addEventListener("online", msgRealtimeCheck);
+window.addEventListener("pagehide", msgRealtimeStop);
 
 (async () => {
   // Accès démo direct par lien : prof.questedu.ca/?demo=1 (aucune connexion requise, priorité sur la session).

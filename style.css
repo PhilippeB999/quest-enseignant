@@ -204,3 +204,53 @@ tbody tr.clic { cursor:pointer; } tbody tr.clic:hover { background:var(--panel-2
   background:var(--panel-2); color:var(--ink-faint); border:1px solid var(--line-strong);
   cursor:help; white-space:nowrap; }
 @media (prefers-reduced-motion: reduce) { .ccase.cneuf { animation:none; } }
+
+/* ---------- Messagerie enseignant → élève (tableau de bord de base) ----------
+   Reprend les jetons existants (panneau crème, accent or, pastilles). Les
+   classes `clive`, `crelire`, `csec`, `clist`, `cmsg`, `cbtn` sont celles déjà
+   définies plus haut, réutilisées en LECTURE seule : aucune règle du carnet
+   n'est modifiée ici. */
+.pill.lu { background:var(--panel-2); color:var(--ink-soft); border:1px solid var(--line-strong); }
+.msg-compose { background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow);
+  padding:18px 20px 20px; margin-bottom:8px; }
+.msg-compose label { display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  margin:14px 0 6px; font-size:12px; color:var(--ink-soft); }
+.msg-compose label:first-child { margin-top:0; }
+.msg-compose select, .msg-compose input, .msg-compose textarea { width:100%; padding:11px 13px; border-radius:10px;
+  border:1px solid var(--line-strong); background:var(--panel-2); color:var(--ink); font-size:14px; font-family:inherit; }
+.msg-compose textarea { min-height:84px; resize:vertical; }
+.msg-compose .cbtn { margin-top:14px; }
+.msg-compose .cbtn:disabled { opacity:.6; cursor:default; }
+.msg-rapides { display:flex; flex-wrap:wrap; gap:8px; }
+.msg-rapide { background:var(--panel-2); border:1px solid var(--line-strong); color:var(--ink); border-radius:99px;
+  padding:7px 13px; font-size:13px; cursor:pointer; font-family:inherit; }
+.msg-rapide:hover { border-color:var(--accent-soft); }
+.msg-rapide.on { background:var(--accent-soft); color:var(--accent-ink); border-color:var(--accent-soft); font-weight:650; }
+.msg-cpt { font-variant-numeric:tabular-nums; color:var(--ink-faint); }
+.msg-cpt.bas { color:var(--crit); font-weight:650; }
+.msg-facultatif { color:var(--ink-faint); }
+.msg-aide { font-size:12px; color:var(--ink-faint); margin:8px 0 0; line-height:1.5; }
+.msg-ok { background:var(--ok-bg); color:var(--ok); border-radius:10px; padding:11px 14px; font-size:13px; margin-top:14px; }
+
+.msg-carte { background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); padding:13px 16px; min-width:0; }
+.msg-tete { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+.msg-dest { font-weight:650; font-size:14px; min-width:0; overflow-wrap:anywhere; }
+.msg-dest .em { font-size:17px; }
+.msg-quand { font-size:11.5px; color:var(--ink-faint); white-space:nowrap; }
+.msg-texte { margin:8px 0 0; font-size:14px; line-height:1.5; white-space:pre-line; overflow-wrap:anywhere; }
+.msg-pied { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
+.msg-auteur { font-size:12px; color:var(--ink-faint); min-width:0; overflow-wrap:anywhere; }
+.msg-etat { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.msg-compte { font-size:12.5px; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+.msg-detail { background:none; border:1px solid var(--line-strong); color:var(--accent); border-radius:99px;
+  padding:3px 10px; font-size:11.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+.msg-detail-liste { margin-top:10px; border-top:1px solid var(--line); padding-top:8px; display:flex; flex-direction:column; gap:6px; }
+.msg-detail-l { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; font-size:13px; }
+.msg-detail-l b { font-weight:600; min-width:0; overflow-wrap:anywhere; }
+
+.msg-fiche { margin-top:22px; }
+.msg-fiche-h { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+.msg-fiche-h .csec { margin:0; }
+.msg-fiche-h .cbtn { margin-top:0; }
+.msg-fiche-l { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin-top:10px; }
+.msg-fiche-t { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--ink-faint); }
