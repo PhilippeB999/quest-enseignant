@@ -1422,9 +1422,9 @@ function shell(crumbs, body) {
 function renderClasses() {
   const cards = cache.classes.length ? cache.classes.map(c => `
     <div class="ccard" data-open="${c.id}">
-      <h3>${c.nom || c.code_classe}</h3>
-      <div class="prog-name">${c.programme || ""}</div>
-      <div class="rowk"><span>Code de classe</span><b>${c.code_classe}</b></div>
+      <h3>${esc(c.nom || c.code_classe)}</h3>
+      <div class="prog-name">${esc(c.programme || "")}</div>
+      <div class="rowk"><span>Code de classe</span><b>${esc(c.code_classe)}</b></div>
     </div>`).join("") : `<div class="empty">Aucun groupe pour l'instant.</div>`;
   return shell(`${cache.org.nom}`, `
     <div class="view">
@@ -1450,8 +1450,8 @@ function renderCohort() {
     const etat = joursDepuis(e.vu_le) > 7
       ? `<span class="pill warn">À relancer</span>`
       : `<span class="pill ok">Actif</span>`;
-    return `<tr class="clic" data-eleve="${e.id}">
-      <td><div class="totem"><span class="em">${emojiFor(e.totem)}</span><b>${e.totem}</b></div></td>
+    return `<tr class="clic" data-eleve="${esc(e.id)}">
+      <td><div class="totem"><span class="em">${emojiFor(e.totem)}</span><b>${esc(e.totem)}</b></div></td>
       <td><span class="bar"><i class="${cls}" style="width:${pct}%"></i></span><span class="barnum">${e.niveauxReussis} niv.</span></td>
       <td class="num">${e.modulesMaitrises}</td>
       <td style="color:var(--ink-soft)">${dateRelative(e.vu_le)}</td>
@@ -1591,15 +1591,15 @@ function renderStudent(eleve) {
       if (sc == null) return `<span class="pip none">–</span>`;
       return `<span class="pip ${sc>=70?"pass":"try"}">${sc}</span>`;
     }).join("");
-    return `<div class="mod"><span class="mt"><span class="mn">${moduleTitle(m)}</span></span><span class="pips">${pips}</span></div>`;
+    return `<div class="mod"><span class="mt"><span class="mn">${esc(moduleTitle(m))}</span></span><span class="pips">${pips}</span></div>`;
   }).join("") : `<div class="mod"><span class="mt" style="color:var(--ink-soft)">Aucune progression enregistrée.</span><span></span></div>`;
 
-  return shell(`${cache.classe.nom} › <b>${eleve.totem}</b>`, `
+  return shell(`${esc(cache.classe.nom)} › <b>${esc(eleve.totem)}</b>`, `
     <div class="view">
       <button class="back" data-nav="cohort">← Retour au groupe</button>
       <div class="fhead">
         <span class="big">${emojiFor(eleve.totem)}</span>
-        <div><h2>${eleve.totem}</h2><div class="meta">Rattaché le ${new Date(eleve.cree_le).toLocaleDateString("fr-CA")} · vu ${dateRelative(eleve.vu_le)}</div></div>
+        <div><h2>${esc(eleve.totem)}</h2><div class="meta">Rattaché le ${new Date(eleve.cree_le).toLocaleDateString("fr-CA")} · vu ${dateRelative(eleve.vu_le)}</div></div>
         <div class="stat"><u>Niveaux réussis</u><b class="num">${s.niveauxReussis}</b></div>
         <div class="stat"><u>Modules maîtrisés</u><b class="num">${s.modulesMaitrises}</b></div>
       </div>
