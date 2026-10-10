@@ -422,6 +422,7 @@ async function enterDemo() {
   // traînerait dans la démo, pas d'abonnement temps réel orphelin.
   carnetRealtimeStop();
   msgRealtimeStop();             // messagerie : pas de canal orphelin derrière la démo
+  msgDemoStop();
   cache = cacheVide();
   cache.demo = true;
   root.innerHTML = `<div class="loading">Chargement de la démonstration…</div>`;
@@ -467,6 +468,7 @@ async function enterDemo() {
 function exitDemo() {
   carnetRealtimeStop();          // pas d'abonnement orphelin derrière la démo
   msgRealtimeStop();
+  msgDemoStop();
   cache = cacheVide();
   renderLogin();
 }
@@ -576,6 +578,11 @@ async function openClass(classe) {
     const ids = eleves.map(e => e.id);
     const prog = (cache.demoProg || []).filter(p => ids.includes(p.eleve_id));
     cache.classe = classe; cache.eleves = eleves; cache.prog = prog; cache.view = "cohort";
+    // Messagerie SIMULÉE (aucune requête, aucun canal) : voir msgDemoConstruire().
+    msgDemoStop();
+    const brouillon = cache.msg ? cache.msg.brouillon : "";
+    cache.msg = msgDemoConstruire(classe);
+    cache.msg.brouillon = brouillon;
     render();
     return;
   }
@@ -977,11 +984,20 @@ function msgVide() {
    cacheVide(). */
 function M() { if (!cache.msg) cache.msg = msgVide(); return cache.msg; }
 function msgDispo() { return !cache.demo && !!cache.classe && !!cache.msg && cache.msg.dispo; }
+/* Vitrine publique (?demo=1) : messagerie SIMULÉE dans le navigateur (voir
+   « MESSAGERIE — VITRINE DÉMO »). msgDispo() reste false en démo : tout le
+   chemin réel (lecture, envoi, temps réel, relecture) demeure inatteignable.
+   msgVisible() ne sert qu'à AFFICHER les points d'entrée ; hors démo, il vaut
+   exactement msgDispo(). */
+function msgDemoActif() { return !!cache.demo && !!cache.classe && !!cache.msg && !!cache.msg.demo; }
+function msgVisible() { return msgDispo() || msgDemoActif(); }
 
 function msgLireSignature() {
+  if (cache.demo) return String((cache.msg && cache.msg.demoSig) || "").slice(0, 60);   // démo : en mémoire seulement
   try { return String(localStorage.getItem(MSG_SIGNATURE_KEY) || "").slice(0, 60); } catch (_) { return ""; }
 }
 function msgEcrireSignature(v) {
+  if (cache.demo) { M().demoSig = String(v || "").trim().slice(0, 60); return; }       // démo : rien de persistant
   try { localStorage.setItem(MSG_SIGNATURE_KEY, String(v || "").trim().slice(0, 60)); } catch (_) {}
 }
 
@@ -997,6 +1013,8 @@ function msgTotem(id) {
   return e ? e.totem || "Élève" : "Élève retiré du groupe";
 }
 function msgAuteur(m) {
+  // Démo : aucun courriel, jamais (les messages d'exemple n'en ont pas).
+  if (cache.demo) return m.demoLocal ? (m.auteur_nom ? `${m.auteur_nom} (toi)` : "Toi") : (m.auteur_nom || "Enseignant(e)");
   if (cache.userEmail && m.auteur_courriel === cache.userEmail) return m.auteur_nom ? `${m.auteur_nom} (toi)` : "Toi";
   if (m.auteur_nom) return `${m.auteur_nom} · ${m.auteur_courriel || ""}`;
   return m.auteur_courriel || "Enseignant(e)";
@@ -1060,9 +1078,164 @@ async function loadMessages(classe) {
   catch (_) { cache.msg.dispo = false; }              // hors ligne / SQL absent : messagerie masquée
 }
 
+/* ==================================================================
+   MESSAGERIE — VITRINE DÉMO (prof.questedu.ca/?demo=1)
+   ==================================================================
+   Simulation 100 % côté client, pour que les CFP découvrent la messagerie
+   sans compte. AUCUNE requête : ni messages_enseignant, ni messages_lectures,
+   ni canal temps réel, ni relecture périodique (msgDispo() reste false en
+   démo, ce qui garde tout le chemin réel fermé). Les messages et accusés sont
+   fabriqués à partir des élèves fictifs déjà renvoyés par demo_dashboard().
+   Un envoi s'ajoute à l'historique local avec la mention « Démo — non
+   envoyé », puis quelques accusés simulés arrivent. Rien n'est persistant :
+   un rechargement repart des exemples. Aucun courriel n'est fabriqué. */
+
+const MSG_DEMO_SIGNATURES = ["Mme Gagnon", "M. Tremblay", "Mme Bouchard", "M. Côté", "Mme Roy",
+  "M. Lavoie", "Mme Pelletier", "M. Bélanger", "Mme Morin"];
+/* Rappel d'examen ou d'atelier, par numéro de DEP (repli générique). */
+const MSG_DEMO_RAPPEL = {
+  "5325": "Examen sur les signes vitaux jeudi. Révisez les valeurs normales du pouls, de la respiration et de la pression artérielle dans l'app.",
+  "5358": "Atelier pratique sur les déplacements sécuritaires demain matin. Révisez les principes PDSB avant d'arriver.",
+  "5245": "Évaluation pratique de coloration mardi. Révisez la roue chromatique et les temps de pose.",
+  "5298": "Examen sur le système de freinage vendredi. Faites le niveau 2 du module dans l'app d'ici là.",
+  "5344": "Remise du projet de mise en page vendredi. Vérifiez vos fonds perdus et la résolution des images.",
+  "5333": "Examen jeudi sur la lecture de plans et les pentes d'évacuation. Révisez le module dans l'app.",
+  "5382": "Rappel : lunettes, gants et protection respiratoire obligatoires en atelier dès lundi. Révisez le module santé et sécurité.",
+  "5220": "Examen du module santé et sécurité jeudi. Révisez les règles de sécurité sur les chantiers et la circulation autour des engins."
+};
+const MSG_DEMO_GENERIQUE = "Examen jeudi : prenez 15 minutes pour réviser le dernier module dans l'app.";
+
+let msgDemoTimers = [];
+let msgDemoSeq = 0;
+function msgDemoStop() {
+  msgDemoTimers.forEach((t) => clearTimeout(t));
+  msgDemoTimers = [];
+}
+
+function msgDemoIlYa(ms) { return new Date(Date.now() - ms).toISOString(); }
+function msgDemoApres(iso, ms) { return new Date(Math.min(Date.now(), new Date(iso).getTime() + ms)).toISOString(); }
+
+/* Construit l'état de messagerie démo d'UN groupe. Déterministe (mêmes élèves →
+   mêmes accusés) ; seules les dates suivent l'heure courante. */
+function msgDemoConstruire(classe) {
+  const H = 3600000, J = 86400000;
+  const idx = Math.max(0, (cache.classes || []).findIndex((c) => c.id === classe.id));
+  const sig = MSG_DEMO_SIGNATURES[idx % MSG_DEMO_SIGNATURES.length];
+  const collegue = MSG_DEMO_SIGNATURES[(idx + 1) % MSG_DEMO_SIGNATURES.length];
+  const dep = (String(classe.programme || "").match(/\b(\d{4})\b/) || [])[1] || "";
+  const eleves = (cache.eleves || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const parProgres = (cache.eleves || []).map((e) => ({ e, n: statsEleve(e.id).niveauxReussis }))
+    .sort((a, b) => b.n - a.n || String(a.e.id).localeCompare(String(b.e.id)));
+  const meilleur = parProgres.length ? parProgres[0].e : null;
+  const relancer = (cache.eleves || []).slice()
+    .sort((a, b) => joursDepuis(b.vu_le) - joursDepuis(a.vu_le) || String(a.id).localeCompare(String(b.id)))
+    .find((e) => !meilleur || e.id !== meilleur.id) || null;
+
+  const base = "demo-" + classe.id + "-";
+  const liste = [];
+  const lectures = [];
+  const lire = (mid, cree, e, accuse, delai) => {
+    const lu = msgDemoApres(cree, delai);
+    lectures.push({ message_id: mid, eleve_id: e.id, classe_id: classe.id, lu_le: lu,
+      accuse: accuse || null, accuse_le: accuse ? msgDemoApres(lu, 4 * 60000) : null });
+  };
+
+  // 1. Toute la classe, il y a 2 h : mélange non lu / lu / 👍 / ✋.
+  const m1 = { id: base + "1", classe_id: classe.id, eleve_id: null, modele: null,
+    texte: MSG_DEMO_RAPPEL[dep] || MSG_DEMO_GENERIQUE, auteur_nom: sig, cree_le: msgDemoIlYa(2 * H) };
+  const motif1 = ["compris", "lu", "en_classe", null, "compris", "lu"];
+  eleves.forEach((e, i) => {
+    const a = motif1[i % motif1.length];
+    if (a === null) return;                                       // non lu
+    lire(m1.id, m1.cree_le, e, a === "lu" ? null : a, (12 + i * 7) * 60000);
+  });
+
+  // 2. Un élève, hier : félicitations, accusé 👍.
+  if (meilleur) {
+    const m2 = { id: base + "2", classe_id: classe.id, eleve_id: meilleur.id, modele: null,
+      texte: "Bravo pour ta progression cette semaine! Continue comme ça.", auteur_nom: sig, cree_le: msgDemoIlYa(J + 3 * H) };
+    liste.push(m2);
+    lire(m2.id, m2.cree_le, meilleur, "compris", 40 * 60000);
+  }
+
+  // 3. Toute la classe, il y a 4 jours, par un(e) collègue : presque tous l'ont lu.
+  const m3 = { id: base + "3", classe_id: classe.id, eleve_id: null, modele: null,
+    texte: "Rappel : 15 minutes de révision dans l'app avant chaque cours, ça fait toute la différence à l'examen.",
+    auteur_nom: collegue, cree_le: msgDemoIlYa(4 * J + 5 * H) };
+  eleves.forEach((e, i) => {
+    if (i % 5 === 3) return;                                      // non lu
+    lire(m3.id, m3.cree_le, e, i % 3 === 0 ? "compris" : null, (30 + i * 45) * 60000);
+  });
+
+  // 4. Un élève à relancer, il y a 6 jours : message rapide, accusé ✋.
+  if (relancer) {
+    const m4 = { id: base + "4", classe_id: classe.id, eleve_id: relancer.id, modele: "voir_classe",
+      texte: "Viens me voir en classe", auteur_nom: sig, cree_le: msgDemoIlYa(6 * J + 2 * H) };
+    liste.push(m4);
+    lire(m4.id, m4.cree_le, relancer, "en_classe", 26 * H);
+  }
+
+  liste.push(m1, m3);
+  liste.sort((a, b) => String(b.cree_le).localeCompare(String(a.cree_le)));
+  const m = msgVide();
+  m.demo = true;
+  m.rt = "demo";
+  m.demoSig = sig;
+  m.liste = liste;
+  m.lectures = lectures;
+  return m;
+}
+
+/* Envoi en démo : ajout LOCAL à l'historique, puis accusés simulés. */
+function msgDemoEnvoyer() {
+  const m = M();
+  if (m.envoi) return;
+  const champ = document.getElementById("msgTexte");
+  const texte = String(champ ? champ.value : m.brouillon || "").trim();
+  m.brouillon = texte;
+  m.info = ""; m.erreur = "";
+  if (!texte) { m.erreur = "Écris un message ou choisis un message rapide."; render(); return; }
+  if (texte.length > MSG_MAX) { m.erreur = `Le message dépasse ${MSG_MAX} caractères.`; render(); return; }
+  const eleve = m.dest ? msgEleve(m.dest) : null;
+  if (m.dest && !eleve) { m.erreur = "Cet élève n'est plus dans le groupe."; m.dest = ""; render(); return; }
+  const rapide = MSG_RAPIDES.find((r) => r.t === texte);
+  const classeId = cache.classe.id;
+  const msg = { id: "demo-local-" + (++msgDemoSeq), classe_id: classeId, eleve_id: eleve ? eleve.id : null,
+    modele: rapide ? rapide.id : null, texte, auteur_nom: msgLireSignature().trim() || null,
+    cree_le: new Date().toISOString(), demoLocal: true };
+  m.liste.unshift(msg);
+  m.brouillon = "";
+  m.info = (eleve ? `Démo : message ajouté pour ${eleve.totem || "l'élève"}` : "Démo : message ajouté pour toute la classe")
+    + " — rien n'a été envoyé. Regarde les accusés arriver.";
+  render();
+
+  // Qui « reçoit » : l'élève visé, ou deux élèves au hasard de la classe.
+  const cibles = eleve ? [eleve] : (cache.eleves || []).slice().sort(() => Math.random() - 0.5).slice(0, 2);
+  const etat = m;                                                  // ce groupe-ci seulement
+  const toujoursLa = () => cache.demo && cache.msg === etat && cache.classe && cache.classe.id === classeId
+    && etat.liste.indexOf(msg) !== -1;
+  const redessiner = () => { if (cache.view === "messages" || cache.view === "student" || cache.view === "cohort") render(true); };
+  cibles.forEach((e, i) => {
+    msgDemoTimers.push(setTimeout(() => {
+      if (!toujoursLa()) return;
+      etat.lectures.push({ message_id: msg.id, eleve_id: e.id, classe_id: classeId,
+        lu_le: new Date().toISOString(), accuse: null, accuse_le: null });
+      redessiner();
+    }, 2000 + i * 1200));
+    msgDemoTimers.push(setTimeout(() => {
+      if (!toujoursLa()) return;
+      const l = etat.lectures.find((x) => x.message_id === msg.id && x.eleve_id === e.id);
+      if (!l) return;
+      l.accuse = "compris"; l.accuse_le = new Date().toISOString();
+      redessiner();
+    }, 4000 + i * 1500));
+  });
+}
+
 /* ------------------ Envoi ------------------ */
 
 async function msgEnvoyer() {
+  if (msgDemoActif()) { msgDemoEnvoyer(); return; }    // vitrine : rien ne part au serveur
   const m = M();
   if (m.envoi || !msgDispo()) return;
   const champ = document.getElementById("msgTexte");
@@ -1252,7 +1425,7 @@ function msgCarteHTML(m) {
         <span class="msg-dest">${pourEleve
           ? `<span class="em">${emojiFor(msgTotem(m.eleve_id))}</span> ${esc(msgTotem(m.eleve_id))}`
           : `👥 Toute la classe`}</span>
-        <span class="msg-quand">${esc(msgQuand(m.cree_le))}</span>
+        <span class="msg-quand">${m.demoLocal ? `<span class="pill warn">Démo — non envoyé</span> ` : ""}${esc(msgQuand(m.cree_le))}</span>
       </div>
       <p class="msg-texte">${esc(m.texte)}</p>
       <div class="msg-pied">
@@ -1272,7 +1445,9 @@ function renderMessagesView() {
     .concat(eleves.map((e) => `<option value="${esc(e.id)}"${m.dest === e.id ? " selected" : ""}>${emojiFor(e.totem)} ${esc(e.totem)}</option>`))
     .join("");
   const restant = MSG_MAX - String(m.brouillon || "").length;
-  const etatLive = m.rt === "on"
+  const etatLive = m.demo
+    ? { c: "on", t: "● Démo — accusés simulés", aide: "Simulation locale : dans votre centre, les accusés des élèves arrivent en direct." }
+    : m.rt === "on"
     ? { c: "on", t: "● En direct", aide: "Les accusés des élèves apparaissent d'eux-mêmes." }
     : m.rt === "repli"
       ? { c: "repli", t: "◍ Mise à jour automatique", aide: "Le direct n'est pas disponible sur ce réseau : la liste se relit toutes les 30 secondes." }
@@ -1283,9 +1458,10 @@ function renderMessagesView() {
       <button class="back" data-nav="cohort">← Retour au groupe</button>
       <h1>📬 Messages</h1>
       <p class="subtitle">${esc(c.nom)} · tu écris, l'élève lit. Il ne peut pas répondre par écrit : il choisit « 👍 Compris » ou « ✋ J'en parle en classe ».</p>
+      ${m.demo ? `<div class="msg-demo">🔍 <b>Démonstration :</b> les messages ne sont pas réellement envoyés. Dans votre centre, ils arrivent directement dans l'app de l'élève.</div>` : ""}
       <div class="clive-bar">
         <span class="clive ${etatLive.c}" title="${etatLive.aide}">${etatLive.t}</span>
-        <button class="crelire" data-msg-relire title="Relit la liste maintenant">↻ Actualiser</button>
+        ${m.demo ? "" : `<button class="crelire" data-msg-relire title="Relit la liste maintenant">↻ Actualiser</button>`}
       </div>
 
       <section class="msg-compose">
@@ -1321,7 +1497,7 @@ function renderMessagesView() {
 
 /* Bloc de la fiche élève : ses messages (personnels et de classe) et leur état. */
 function msgFicheHTML(eleve) {
-  if (!msgDispo() || !eleve) return "";
+  if (!msgVisible() || !eleve) return "";
   const siens = M().liste.filter((m) => !m.eleve_id || m.eleve_id === eleve.id).slice(0, 10);
   const lignes = siens.length ? siens.map((m) => {
     const s = msgEtat(msgLecture(m.id, eleve.id));
@@ -1405,7 +1581,7 @@ function shell(crumbs, body) {
       <button class="nav ${cache.view==='classes'?'on':''}" data-nav="classes">▦ Vue d'ensemble</button>
       ${cache.classe ? `<button class="nav ${(cache.view==='cohort'||cache.view==='student')?'on':''}" data-nav="cohort">👥 ${cache.classe.nom}</button>` : ""}
       ${cache.classe && cache.carnetActif ? `<button class="nav ${cache.view==='carnet'?'on':''}" data-nav="carnet">🦺 ${CARNET_NOM}${carnetAttente().length ? ` <span class="navbadge">${carnetAttente().length}</span>` : ""}</button>` : ""}
-      ${cache.classe && msgDispo() ? `<button class="nav ${cache.view==='messages'?'on':''}" data-nav="messages">📬 Messages</button>` : ""}
+      ${cache.classe && msgVisible() ? `<button class="nav ${cache.view==='messages'?'on':''}" data-nav="messages">📬 Messages</button>` : ""}
       ${who}
     </aside>
     <div class="main">
@@ -1469,7 +1645,7 @@ function renderCohort() {
         <div class="kpi"><u>Niveaux réussis</u><strong>${totalReussis}</strong></div>
         <div class="kpi"><u>Actifs (7 j)</u><strong>${actifs}</strong></div>
         <div class="kpi ${aRelancer?'alert':''}"><u>À relancer</u><strong>${aRelancer}</strong></div>
-        ${msgDispo() ? `<div class="kpi clic" data-nav="messages"><u>📬 Messages envoyés</u><strong>${M().liste.length}</strong></div>` : ""}
+        ${msgVisible() ? `<div class="kpi clic" data-nav="messages"><u>📬 Messages envoyés</u><strong>${M().liste.length}</strong></div>` : ""}
         ${cache.carnetActif ? `<div class="kpi clic ${carnetAttente().length?'alert':''}" data-nav="carnet"><u>${CARNET_NOM} · à traiter</u><strong>${carnetAttente().length}</strong></div>` : ""}
       </div>
       <div class="tablewrap"><table>
@@ -1627,7 +1803,7 @@ function render(doux) {
   if (cache.view === "classes") html = renderClasses();
   else if (cache.view === "student") html = renderStudent(cache.currentEleve);
   else if (cache.view === "carnet" && cache.carnetActif) html = renderCarnetView();
-  else if (cache.view === "messages" && msgDispo()) html = renderMessagesView();
+  else if (cache.view === "messages" && msgVisible()) html = renderMessagesView();
   else html = renderCohort();
   root.innerHTML = html;
 

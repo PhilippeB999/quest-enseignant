@@ -271,3 +271,15 @@ tbody tr.clic { cursor:pointer; } tbody tr.clic:hover { background:var(--panel-2
   .top { padding:12px 16px; }
   .view { padding:20px 16px; }
 }
+
+/* Messagerie — vitrine démo */
+.msg-demo { background:var(--warn-bg); color:var(--warn); border:1px solid var(--line); border-radius:10px;
+  padding:10px 14px; font-size:13px; line-height:1.5; margin:0 0 12px; }
+.msg-demo b { font-weight:750; }
+.msg-quand .pill { margin-right:4px; }
+/* Détail des accusés sur écran étroit : le totem garde sa ligne, la pastille passe dessous
+   (sinon le totem se coupait lettre par lettre à 360 px). */
+@media (max-width: 520px) {
+  .msg-detail-l { grid-template-columns:auto minmax(0,1fr); }
+  .msg-detail-l .pill { grid-column:2; justify-self:start; }
+}
