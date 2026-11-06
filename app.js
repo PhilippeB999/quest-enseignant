@@ -249,7 +249,17 @@ const MODULE_INFO = {
   soins_mere_nouveaune:{t:"Soins aux mères et aux nouveaux-nés",o:2},
   // SantéMentaleQuest — Approche en santé mentale (SASI, compétence 20)
   // ⚠️ "approche_sante_mentale" et non "sante_mentale" : cet id-là appartient déjà à SASI.
-  approche_sante_mentale:{t:"Approche privilégiée en santé mentale",o:1}
+  approche_sante_mentale:{t:"Approche privilégiée en santé mentale",o:1},
+  // ParkinsonQuest — Soins à la personne atteinte de Parkinson (PAB 5358 + SASI 5325)
+  // Préfixe "pk_" : évite toute collision avec les ids de SASI/PAB (ex. "medication").
+  pk_comprendre:{t:"Parkinson — Comprendre la maladie",o:1},
+  pk_medication:{t:"Parkinson — Médication et horaire",o:2},
+  pk_mobilite:{t:"Parkinson — Mobilité et prévention des chutes",o:3},
+  pk_deglutition:{t:"Parkinson — Déglutition et alimentation",o:4},
+  pk_communication:{t:"Parkinson — Communication",o:5},
+  pk_soins_avq:{t:"Parkinson — Soins d'hygiène et AVQ",o:6},
+  pk_non_moteurs:{t:"Parkinson — Symptômes non moteurs et cognition",o:7},
+  pk_accompagnement:{t:"Parkinson — Accompagnement et proches aidants",o:8}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
