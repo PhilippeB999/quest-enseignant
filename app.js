@@ -586,7 +586,7 @@ async function openClass(classe) {
   if (cache.demo) {
     const eleves = (cache.demoEleves || []).filter(e => e.classe_id === classe.id);
     const ids = eleves.map(e => e.id);
-    const prog = (cache.demoProg || []).filter(p => ids.includes(p.eleve_id));
+    const prog = separerProgramme((cache.demoProg || []).filter(p => ids.includes(p.eleve_id)));
     cache.classe = classe; cache.eleves = eleves; cache.prog = prog; cache.view = "cohort";
     // Messagerie SIMULÉE (aucune requête, aucun canal) : voir msgDemoConstruire().
     msgDemoStop();
@@ -604,6 +604,7 @@ async function openClass(classe) {
     const { data } = await supabase.from("progression").select("*").in("eleve_id", ids);
     prog = data || [];
   }
+  prog = separerProgramme(prog);
   cache.classe = classe; cache.eleves = eleves || []; cache.prog = prog; cache.view = "cohort";
   await loadCarnet(classe);
   await loadMessages(classe);    // messagerie (tableau de bord de base, indépendante du carnet)
@@ -927,6 +928,26 @@ function carnetAttente() { return cache.carnet.filter(r => r.statut === "attente
 function carnetNomEleve(r) { return r.eleve_nom || r.eleve_totem || "Élève"; }
 function carnetHeuresDe(appareilId) {
   return cache.carnetHeures.find(h => h.appareil_id === appareilId) || null;
+}
+
+/* Programme de l'élève (PAB ou SASI), envoyé par ParkinsonQuest comme une ligne
+   spéciale de progression : module "pk_programme", niveau 1, score 1 = PAB, 2 = SASI.
+   On la retire de la progression (elle ne compte ni comme module ni comme niveau)
+   et on la garde à part dans cache.programmes pour l'afficher à côté du totem. */
+const PROGRAMME_MODULE = "pk_programme";
+const PROGRAMME_NOMS = { 1: "PAB", 2: "SASI" };
+function separerProgramme(prog) {
+  cache.programmes = {};
+  return (prog || []).filter(p => {
+    if (p.module !== PROGRAMME_MODULE) return true;
+    const nom = PROGRAMME_NOMS[p.score];
+    if (nom) cache.programmes[p.eleve_id] = nom;
+    return false;
+  });
+}
+function programmeTag(eleveId) {
+  const nom = cache.programmes && cache.programmes[eleveId];
+  return nom ? ` <span class="pill mut prog-tag">${esc(nom)}</span>` : "";
 }
 
 /* Statistiques par élève, à partir de la progression réelle. */
@@ -1638,7 +1659,7 @@ function renderCohort() {
       ? `<span class="pill warn">À relancer</span>`
       : `<span class="pill ok">Actif</span>`;
     return `<tr class="clic" data-eleve="${esc(e.id)}">
-      <td><div class="totem"><span class="em">${emojiFor(e.totem)}</span><b>${esc(e.totem)}</b></div></td>
+      <td><div class="totem"><span class="em">${emojiFor(e.totem)}</span><b>${esc(e.totem)}</b>${programmeTag(e.id)}</div></td>
       <td><span class="bar"><i class="${cls}" style="width:${pct}%"></i></span><span class="barnum">${e.niveauxReussis} niv.</span></td>
       <td class="num">${e.modulesMaitrises}</td>
       <td style="color:var(--ink-soft)">${dateRelative(e.vu_le)}</td>
@@ -1786,7 +1807,7 @@ function renderStudent(eleve) {
       <button class="back" data-nav="cohort">← Retour au groupe</button>
       <div class="fhead">
         <span class="big">${emojiFor(eleve.totem)}</span>
-        <div><h2>${esc(eleve.totem)}</h2><div class="meta">Rattaché le ${new Date(eleve.cree_le).toLocaleDateString("fr-CA")} · vu ${dateRelative(eleve.vu_le)}</div></div>
+        <div><h2>${esc(eleve.totem)} ${programmeTag(eleve.id)}</h2><div class="meta">Rattaché le ${new Date(eleve.cree_le).toLocaleDateString("fr-CA")} · vu ${dateRelative(eleve.vu_le)}</div></div>
         <div class="stat"><u>Niveaux réussis</u><b class="num">${s.niveauxReussis}</b></div>
         <div class="stat"><u>Modules maîtrisés</u><b class="num">${s.modulesMaitrises}</b></div>
       </div>
