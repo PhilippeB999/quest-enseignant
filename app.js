@@ -293,7 +293,16 @@ const MODULE_INFO = {
   ger_scpd:{t:"Gériatrie — Symptômes comportementaux (SCPD)",o:5},
   ger_communication:{t:"Gériatrie — Communication et approche relationnelle",o:6},
   ger_securite:{t:"Gériatrie — Sécurité et autonomie",o:7},
-  ger_accompagnement:{t:"Gériatrie — Proches aidants, maltraitance et fin de vie",o:8}
+  ger_accompagnement:{t:"Gériatrie — Proches aidants, maltraitance et fin de vie",o:8},
+  // DiabèteQuest (PAB + SASI)
+  dia_comprendre:{t:"Diabète — Comprendre le diabète",o:1},
+  dia_hypoglycemie:{t:"Diabète — Hypoglycémie",o:2},
+  dia_hyperglycemie:{t:"Diabète — Hyperglycémie",o:3},
+  dia_glycemie:{t:"Diabète — Glycémie capillaire",o:4},
+  dia_medication:{t:"Diabète — Médication et insuline",o:5},
+  dia_alimentation:{t:"Diabète — Alimentation",o:6},
+  dia_complications:{t:"Diabète — Complications et soins des pieds",o:7},
+  dia_quotidien:{t:"Diabète — Vivre avec le diabète au quotidien",o:8}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
@@ -969,7 +978,7 @@ function carnetHeuresDe(appareilId) {
    On la retire de la progression (elle ne compte ni comme module ni comme niveau)
    et on la garde à part dans cache.programmes pour l'afficher à côté du totem. */
 // Une ligne par app à choix PAB/SASI : ParkinsonQuest (pk_) et GériatrieQuest (ger_).
-const PROGRAMME_MODULES = ["pk_programme", "ger_programme"];
+const PROGRAMME_MODULES = ["pk_programme", "ger_programme", "dia_programme"];
 const PROGRAMME_NOMS = { 1: "PAB", 2: "SASI" };
 function separerProgramme(prog) {
   cache.programmes = {};
