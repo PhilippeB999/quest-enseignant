@@ -250,6 +250,13 @@ const MODULE_INFO = {
   // SantéMentaleQuest — Approche en santé mentale (SASI, compétence 20)
   // ⚠️ "approche_sante_mentale" et non "sante_mentale" : cet id-là appartient déjà à SASI.
   approche_sante_mentale:{t:"Approche privilégiée en santé mentale",o:1},
+  sm_schizophrenie:{t:"Santé mentale — Schizophrénie",o:2},
+  sm_psychose:{t:"Santé mentale — Épisode psychotique",o:3},
+  sm_personnalite:{t:"Santé mentale — Troubles de la personnalité",o:4},
+  sm_humeur:{t:"Santé mentale — Troubles de l'humeur",o:5},
+  sm_anxiete:{t:"Santé mentale — Troubles anxieux",o:6},
+  sm_psychotropes:{t:"Santé mentale — Médication en santé mentale",o:7},
+  sm_crise:{t:"Santé mentale — Crise et sécurité",o:8},
   // ParkinsonQuest — Soins à la personne atteinte de Parkinson (PAB 5358 + SASI 5325)
   // Préfixe "pk_" : évite toute collision avec les ids de SASI/PAB (ex. "medication").
   pk_comprendre:{t:"Parkinson — Comprendre la maladie",o:1},
@@ -259,7 +266,34 @@ const MODULE_INFO = {
   pk_communication:{t:"Parkinson — Communication",o:5},
   pk_soins_avq:{t:"Parkinson — Soins d'hygiène et AVQ",o:6},
   pk_non_moteurs:{t:"Parkinson — Symptômes non moteurs et cognition",o:7},
-  pk_accompagnement:{t:"Parkinson — Accompagnement et proches aidants",o:8}
+  pk_accompagnement:{t:"Parkinson — Accompagnement et proches aidants",o:8},
+  // CardioQuest — SASI 5325 (préfixe car_)
+  car_anatomie:{t:"Cardio — Cœur et circulation",o:1},
+  car_ic_gauche:{t:"Cardio — Insuffisance cardiaque gauche",o:2},
+  car_ic_droite:{t:"Cardio — Insuffisance cardiaque droite",o:3},
+  car_oap:{t:"Cardio — Œdème aigu du poumon (OAP)",o:4},
+  car_surveillance:{t:"Cardio — Surveillance clinique",o:5},
+  car_medication:{t:"Cardio — Médication cardiaque",o:6},
+  car_coronarien:{t:"Cardio — Angine et infarctus",o:7},
+  car_enseignement:{t:"Cardio — Enseignement et prévention",o:8},
+  // RénalQuest — SASI 5325 (préfixe ren_)
+  ren_anatomie:{t:"Rénal — Système urinaire",o:1},
+  ren_ira:{t:"Rénal — Insuffisance rénale aiguë",o:2},
+  ren_irc:{t:"Rénal — Insuffisance rénale chronique",o:3},
+  ren_dialyse:{t:"Rénal — Dialyse",o:4},
+  ren_liquides:{t:"Rénal — Liquides et électrolytes",o:5},
+  ren_alimentation_medication:{t:"Rénal — Alimentation et médication",o:6},
+  ren_elimination:{t:"Rénal — Élimination urinaire",o:7},
+  ren_infections:{t:"Rénal — Infections urinaires",o:8},
+  // GériatrieQuest — Soins aux personnes âgées (PAB 5358 + SASI 5325)
+  ger_vieillissement:{t:"Gériatrie — Vieillissement normal et pathologique",o:1},
+  ger_alzheimer:{t:"Gériatrie — Maladie d'Alzheimer",o:2},
+  ger_autres_troubles:{t:"Gériatrie — Autres troubles neurocognitifs",o:3},
+  ger_delirium:{t:"Gériatrie — Delirium",o:4},
+  ger_scpd:{t:"Gériatrie — Symptômes comportementaux (SCPD)",o:5},
+  ger_communication:{t:"Gériatrie — Communication et approche relationnelle",o:6},
+  ger_securite:{t:"Gériatrie — Sécurité et autonomie",o:7},
+  ger_accompagnement:{t:"Gériatrie — Proches aidants, maltraitance et fin de vie",o:8}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
@@ -934,12 +968,13 @@ function carnetHeuresDe(appareilId) {
    spéciale de progression : module "pk_programme", niveau 1, score 1 = PAB, 2 = SASI.
    On la retire de la progression (elle ne compte ni comme module ni comme niveau)
    et on la garde à part dans cache.programmes pour l'afficher à côté du totem. */
-const PROGRAMME_MODULE = "pk_programme";
+// Une ligne par app à choix PAB/SASI : ParkinsonQuest (pk_) et GériatrieQuest (ger_).
+const PROGRAMME_MODULES = ["pk_programme", "ger_programme"];
 const PROGRAMME_NOMS = { 1: "PAB", 2: "SASI" };
 function separerProgramme(prog) {
   cache.programmes = {};
   return (prog || []).filter(p => {
-    if (p.module !== PROGRAMME_MODULE) return true;
+    if (!PROGRAMME_MODULES.includes(p.module)) return true;
     const nom = PROGRAMME_NOMS[p.score];
     if (nom) cache.programmes[p.eleve_id] = nom;
     return false;
