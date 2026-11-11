@@ -1657,6 +1657,8 @@ function shell(crumbs, body) {
       ${cache.classe ? `<button class="nav ${(cache.view==='cohort'||cache.view==='student')?'on':''}" data-nav="cohort">👥 ${cache.classe.nom}</button>` : ""}
       ${cache.classe && cache.carnetActif ? `<button class="nav ${cache.view==='carnet'?'on':''}" data-nav="carnet">🦺 ${CARNET_NOM}${carnetAttente().length ? ` <span class="navbadge">${carnetAttente().length}</span>` : ""}</button>` : ""}
       ${cache.classe && msgVisible() ? `<button class="nav ${cache.view==='messages'?'on':''}" data-nav="messages">📬 Messages</button>` : ""}
+      <div class="navlbl">En classe</div>
+      <a class="nav" href="defi.html" target="_blank" rel="noopener" style="text-decoration:none">🎯 Défi en direct</a>
       ${who}
     </aside>
     <div class="main">
