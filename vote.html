@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vote des affiches — Quest</title>
+<meta name="theme-color" content="#D42A1C" />
+<link rel="icon" href="icon-192.png" />
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+/* ============================================================
+   Vote des affiches — écran projeté (résultats en direct)
+   Rien n'est stocké : les votes vivent dans cette page, le temps
+   de la rencontre. Gardez-la ouverte pendant le vote.
+   ============================================================ */
+:root{
+  --rouge:#D42A1C; --rouge-f:#A81E12; --encre:#1B1614; --texte:#4A423E; --gris:#8C8177;
+  --or:#BF831A; --vert:#2E8B57; --fond:#FAF7F6; --carte:#FFFDF9; --ligne:#E7DFD0; --rose:#FBE7E4; --sable:#F4EFEA;
+  color-scheme: light;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; height:100%; background:var(--fond); color:var(--encre); font-family:"Trebuchet MS", system-ui, sans-serif; }
+button{ font:inherit; cursor:pointer; }
+.page{ height:100vh; display:grid; grid-template-columns:minmax(260px, 23vw) 1fr; gap:2.2vw; padding:2.4vw 2.6vw; }
+.cote{ display:flex; flex-direction:column; gap:1.4vw; }
+.sur{ font-size:clamp(11px, .9vw, 15px); font-weight:700; letter-spacing:3px; color:var(--or); text-transform:uppercase; }
+h1{ font-size:clamp(24px, 2.6vw, 46px); line-height:1.08; margin:.3vw 0 0; }
+.qr{ background:#fff; border-radius:20px; padding:1.2vw; box-shadow:0 2px 14px rgba(27,22,20,.1); text-align:center; }
+.qr svg{ width:100%; height:auto; display:block; }
+.qr .url{ font-weight:800; font-size:clamp(14px, 1.35vw, 24px); margin-top:.5vw; }
+.compte{ background:var(--rouge); color:#fff; border-radius:20px; padding:1.1vw 1.3vw; display:flex; align-items:baseline; gap:.8vw; }
+.compte b{ font-size:clamp(34px, 4vw, 72px); line-height:1; }
+.compte span{ font-size:clamp(14px, 1.2vw, 20px); font-weight:700; }
+.compte.ferme{ background:var(--encre); }
+.outils{ margin-top:auto; display:flex; gap:8px; flex-wrap:wrap; }
+.outils button{ border:1px solid var(--ligne); background:var(--carte); color:var(--texte); border-radius:99px; padding:8px 14px; font-size:14px; font-weight:700; }
+.outils button.fort{ background:var(--encre); color:#fff; border-color:var(--encre); }
+.res{ display:grid; grid-template-rows:1fr 1fr; gap:1.6vw; min-height:0; }
+.prog{ background:var(--carte); border:1px solid var(--ligne); border-radius:22px; padding:1.1vw 1.4vw; display:flex; flex-direction:column; min-height:0; }
+.prog h2{ margin:0 0 .8vw; font-size:clamp(18px, 1.7vw, 30px); display:flex; align-items:baseline; gap:.8vw; }
+.prog h2 small{ font-size:.55em; color:var(--gris); font-weight:700; }
+.ligne3{ flex:1; display:grid; grid-template-columns:repeat(3, 1fr); gap:1.4vw; min-height:0; }
+.op{ display:grid; grid-template-columns:auto 1fr; gap:1vw; align-items:end; min-height:0; }
+.op img{ height:100%; max-height:28vh; aspect-ratio:1632/2112; object-fit:cover; border-radius:10px; box-shadow:0 1px 8px rgba(27,22,20,.15); align-self:center; }
+.barre{ display:flex; flex-direction:column; justify-content:flex-end; height:100%; gap:.4vw; }
+.barre .n{ font-size:clamp(22px, 2.4vw, 44px); font-weight:800; line-height:1; }
+.barre .pc{ color:var(--gris); font-weight:700; font-size:clamp(12px, 1vw, 18px); }
+.barre .b{ height:1.4vw; min-height:12px; border-radius:99px; background:var(--sable); overflow:hidden; }
+.barre .b div{ height:100%; width:0; background:var(--gris); border-radius:99px; transition:width .6s cubic-bezier(.2,.8,.2,1); }
+.op.tete .b div{ background:var(--rouge); }
+.op.tete .n{ color:var(--rouge); }
+.barre .lib{ font-weight:700; font-size:clamp(13px, 1.1vw, 20px); }
+.barre .lib b{ color:var(--rouge); }
+.couronne{ display:none; font-size:clamp(12px, .95vw, 16px); font-weight:800; color:#fff; background:var(--or); border-radius:99px; padding:2px 10px; width:max-content; }
+.op.tete .couronne{ display:block; }
+@media (max-width: 800px){ .page{ grid-template-columns:1fr; height:auto; } .res{ grid-template-rows:auto; } .op img{ max-height:30vh; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <aside class="cote">
+    <div><div class="sur">CFP L'Envol · vote anonyme</div><h1>Quelle affiche pour vos élèves ?</h1></div>
+    <div class="qr"><div id="qr"></div><div class="url">questedu.ca/vote</div></div>
+    <div class="compte" id="compte"><b id="nb">0</b><span id="nbtxt">vote reçu</span></div>
+    <div class="outils">
+      <button id="clore" class="fort">Clore le vote</button>
+      <button id="raz">Recommencer</button>
+      <button id="plein">Plein écran</button>
+    </div>
+  </aside>
+  <main class="res" id="res"></main>
+</div>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+const SUPABASE_URL = "https://gejmaxobebsamvfkkpoj.supabase.co";
+const SUPABASE_KEY = "sb_publishable_jqf5eYy0Coka5d0-E86JJQ_bCiQDyvD";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const CANAL = "vote-affiches";
+const URL_VOTE = "https://questedu.ca/vote";
+const LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+const URL_VOTE_LOCAL = location.origin + "/questedu-web/vote/";
+const IMG = LOCAL ? "/questedu-web/vote/" : "https://questedu.ca/vote/";
+
+const STYLES = [["A", "Le téléphone"], ["B", "Le personnage"], ["C", "Le défi"]];
+const PROGS = [["s", "SASI", "SASIQuest"], ["p", "PAB", "PABQuest"]];
+
+const nouveauTour = () => Math.random().toString(36).slice(2, 8);
+let tour = null; try { tour = localStorage.getItem("vote-tour"); } catch {}
+if (!tour) { tour = nouveauTour(); try { localStorage.setItem("vote-tour", tour); } catch {} }
+/* Le tour survit à un rechargement : les téléphones renvoient alors leur vote tout seuls. */
+let hid = null; try { hid = localStorage.getItem("vote-hid"); } catch {}
+if (!hid) { hid = nouveauTour() + nouveauTour(); try { localStorage.setItem("vote-hid", hid); } catch {} }
+const S = { votes: new Map(), ouvert: true, tour, hid };
+
+/* QR */
+try { const q = qrcode(0, "M"); q.addData(LOCAL ? URL_VOTE_LOCAL : URL_VOTE); q.make(); document.getElementById("qr").innerHTML = q.createSvgTag({ cellSize: 6, margin: 1, scalable: true }); } catch {}
+
+/* Squelette des résultats */
+document.getElementById("res").innerHTML = PROGS.map(([k, pr, nom]) => `
+  <section class="prog"><h2>${nom} <small id="t-${k}">0 vote</small></h2>
+    <div class="ligne3">${STYLES.map(([l, t], i) => `
+      <div class="op" id="o-${k}${i}"><img src="${IMG}${l}-${pr}.jpg" alt="Affiche ${l}">
+        <div class="barre"><span class="couronne">★ En tête</span><span class="n">0</span><span class="pc">0 %</span>
+          <div class="b"><div></div></div><span class="lib"><b>${l}</b> · ${t}</span></div></div>`).join("")}
+    </div></section>`).join("");
+
+/* ---------------------------------------------------------- temps réel */
+const canal = supabase.channel(CANAL, { config: { broadcast: { self: false } } });
+canal.on("broadcast", { event: "vote" }, ({ payload: p }) => {
+  if (!S.ouvert || !p || typeof p.id !== "string" || p.id.length > 20) return;
+  const ok = (v) => v === null || (Number.isInteger(v) && v >= 0 && v < 3);
+  if (!ok(p.s) || !ok(p.p) || (p.s === null && p.p === null)) return;
+  if (!S.votes.has(p.id) && S.votes.size >= 300) return;   // garde-fou
+  S.votes.set(p.id, { s: p.s, p: p.p });                     // un vote par téléphone ; le dernier remplace
+  diffuser(); rendre();
+});
+await new Promise((ok) => canal.subscribe((s) => { if (s === "SUBSCRIBED") ok(); }));
+function diffuser() {
+  canal.send({ type: "broadcast", event: "etat", payload: { hid: S.hid, tour: S.tour, ouvert: S.ouvert, recus: [...S.votes.keys()] } });
+}
+setInterval(diffuser, 2000);
+diffuser();
+
+/* ---------------------------------------------------------- affichage */
+function rendre() {
+  const n = S.votes.size;
+  document.getElementById("nb").textContent = n;
+  document.getElementById("nbtxt").textContent = (n > 1 ? "votes reçus" : "vote reçu") + (S.ouvert ? "" : " · vote clos");
+  document.getElementById("compte").classList.toggle("ferme", !S.ouvert);
+  for (const [k] of PROGS) {
+    const c = [0, 0, 0]; for (const v of S.votes.values()) if (v[k] !== null) c[v[k]]++;
+    const tot = c[0] + c[1] + c[2], max = Math.max(...c);
+    document.getElementById("t-" + k).textContent = tot + (tot > 1 ? " votes" : " vote");
+    c.forEach((x, i) => {
+      const el = document.getElementById(`o-${k}${i}`);
+      const pc = tot ? Math.round((x / tot) * 100) : 0;
+      el.querySelector(".n").textContent = x;
+      el.querySelector(".pc").textContent = pc + " %";
+      el.querySelector(".b div").style.width = pc + "%";
+      el.classList.toggle("tete", x > 0 && x === max);
+    });
+  }
+  document.getElementById("clore").textContent = S.ouvert ? "Clore le vote" : "Rouvrir le vote";
+}
+document.getElementById("clore").onclick = () => { S.ouvert = !S.ouvert; diffuser(); rendre(); };
+document.getElementById("raz").onclick = () => {
+  if (!confirm("Effacer tous les votes et recommencer ?")) return;
+  S.votes.clear(); S.ouvert = true; S.tour = nouveauTour(); try { localStorage.setItem("vote-tour", S.tour); } catch {} diffuser(); rendre();
+};
+document.getElementById("plein").onclick = () => { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); };
+window.addEventListener("beforeunload", (e) => { if (S.votes.size) { e.preventDefault(); e.returnValue = ""; } });
+rendre();
+</script>
+</body>
+</html>
