@@ -59,3 +59,8 @@ grant execute on function resultats_affiches(text) to anon, authenticated;
 grant execute on function basculer_vote_affiches(text, boolean) to authenticated;
 
 select 'ok' as resultat, (select ouvert from votes_affiches_etat where tour = 'final-2026-11') as vote_ouvert;
+
+-- 20 nov. 2026 : fermeture automatique à la fin du 27 novembre (heure du Québec).
+alter table votes_affiches_etat add column if not exists ferme_le timestamptz;
+update votes_affiches_etat set ferme_le = '2026-11-28 00:00:00 America/Toronto' where tour = 'final-2026-11';
+-- voter_affiche et resultats_affiches tiennent compte de ferme_le (voir la version exécutée dans Supabase).
