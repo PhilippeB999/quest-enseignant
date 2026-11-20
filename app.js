@@ -983,8 +983,10 @@ const PROGRAMME_NOMS = { 1: "PAB", 2: "SASI" };
 function separerProgramme(prog) {
   cache.programmes = {};
   return (prog || []).filter(p => {
-    if (!PROGRAMME_MODULES.includes(p.module)) return true;
-    const nom = PROGRAMME_NOMS[p.score];
+    // Les lignes de Supabase s'appellent module_id / meilleur_score ; on accepte aussi module / score.
+    const mod = p.module_id || p.module;
+    if (!PROGRAMME_MODULES.includes(mod)) return true;
+    const nom = PROGRAMME_NOMS[p.meilleur_score != null ? p.meilleur_score : p.score];
     if (nom) cache.programmes[p.eleve_id] = nom;
     return false;
   });
