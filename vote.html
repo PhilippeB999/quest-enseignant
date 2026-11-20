@@ -64,7 +64,6 @@ h1{ font-size:clamp(24px, 2.6vw, 46px); line-height:1.08; margin:.3vw 0 0; }
     <div class="compte" id="compte"><b id="nb">0</b><span id="nbtxt">vote reçu</span></div>
     <div class="outils">
       <button id="clore" class="fort">Clore le vote</button>
-      <button id="raz">Recommencer</button>
       <button id="plein">Plein écran</button>
     </div>
   </aside>
@@ -86,13 +85,8 @@ const IMG = LOCAL ? "/questedu-web/vote/" : "https://questedu.ca/vote/";
 const STYLES = [["A", "Le téléphone"], ["D", "La compétition"], ["E", "Le classement"], ["F", "L'évolution"]];
 const PROGS = [["s", "SASI", "SASIQuest"], ["p", "PAB", "PABQuest"]];
 
-const nouveauTour = () => Math.random().toString(36).slice(2, 8);
-let tour = null; try { tour = localStorage.getItem("vote-tour-final"); } catch {}
-if (!tour) { tour = nouveauTour(); try { localStorage.setItem("vote-tour-final", tour); } catch {} }
-/* Le tour survit à un rechargement : les téléphones renvoient alors leur vote tout seuls. */
-let hid = null; try { hid = localStorage.getItem("vote-hid"); } catch {}
-if (!hid) { hid = nouveauTour() + nouveauTour(); try { localStorage.setItem("vote-hid", hid); } catch {} }
-const S = { votes: new Map(), ouvert: true, tour, hid };
+const TOUR = "final-2026-11";   // votes ENREGISTRÉS dans Supabase (voter_affiche / resultats_affiches)
+const S = { votes: [], ouvert: true, err: "" };
 
 /* QR */
 try { const q = qrcode(0, "M"); q.addData(LOCAL ? URL_VOTE_LOCAL : URL_VOTE); q.make(); document.getElementById("qr").innerHTML = q.createSvgTag({ cellSize: 6, margin: 1, scalable: true }); } catch {}
@@ -106,31 +100,28 @@ document.getElementById("res").innerHTML = PROGS.map(([k, pr, nom]) => `
           <div class="b"><div></div></div></div><span class="lib"><b>${l}</b> · ${t}</span></div>`).join("")}
     </div></section>`).join("");
 
-/* ---------------------------------------------------------- temps réel */
-const canal = supabase.channel(CANAL, { config: { broadcast: { self: false } } });
-canal.on("broadcast", { event: "vote" }, ({ payload: p }) => {
-  if (!S.ouvert || !p || typeof p.id !== "string" || p.id.length > 20) return;
-  const ok = (v) => v === null || (Number.isInteger(v) && v >= 0 && v < 4);
-  if (!ok(p.s) || !ok(p.p) || (p.s === null && p.p === null)) return;
-  if (!S.votes.has(p.id) && S.votes.size >= 300) return;   // garde-fou
-  S.votes.set(p.id, { s: p.s, p: p.p });                     // un vote par téléphone ; le dernier remplace
-  diffuser(); rendre();
-});
-await new Promise((ok) => canal.subscribe((s) => { if (s === "SUBSCRIBED") ok(); }));
-function diffuser() {
-  canal.send({ type: "broadcast", event: "etat", payload: { hid: S.hid, tour: S.tour, ouvert: S.ouvert, recus: [...S.votes.keys()] } });
+/* ---------------------------------------------------------- lecture des votes enregistrés
+   Plus besoin de garder cet écran ouvert : les votes sont gardés dans Supabase.
+   L'écran relit les totaux toutes les 4 secondes. */
+async function charger() {
+  const { data, error } = await supabase.rpc("resultats_affiches", { p_tour: TOUR });
+  if (error) { S.err = "Connexion perdue…"; rendre(); return; }
+  S.err = "";
+  S.ouvert = data.length ? !!data[0].ouvert : true;
+  S.votes = data.filter((v) => v.s !== null || v.p !== null);
+  rendre();
 }
-setInterval(diffuser, 2000);
-diffuser();
+setInterval(charger, 4000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) charger(); });
 
 /* ---------------------------------------------------------- affichage */
 function rendre() {
-  const n = S.votes.size;
+  const n = S.votes.length;
   document.getElementById("nb").textContent = n;
-  document.getElementById("nbtxt").textContent = (n > 1 ? "votes reçus" : "vote reçu") + (S.ouvert ? "" : " · vote clos");
+  document.getElementById("nbtxt").textContent = (n > 1 ? "votes reçus" : "vote reçu") + (S.ouvert ? "" : " · vote clos") + (S.err ? " · " + S.err : "");
   document.getElementById("compte").classList.toggle("ferme", !S.ouvert);
   for (const [k] of PROGS) {
-    const c = [0, 0, 0, 0]; for (const v of S.votes.values()) if (v[k] !== null) c[v[k]]++;
+    const c = [0, 0, 0, 0]; for (const v of S.votes) if (v[k] !== null) c[v[k]]++;
     const tot = c[0] + c[1] + c[2] + c[3], max = Math.max(...c);
     document.getElementById("t-" + k).textContent = tot + (tot > 1 ? " votes" : " vote");
     c.forEach((x, i) => {
@@ -144,14 +135,14 @@ function rendre() {
   }
   document.getElementById("clore").textContent = S.ouvert ? "Clore le vote" : "Rouvrir le vote";
 }
-document.getElementById("clore").onclick = () => { S.ouvert = !S.ouvert; diffuser(); rendre(); };
-document.getElementById("raz").onclick = () => {
-  if (!confirm("Effacer tous les votes et recommencer ?")) return;
-  S.votes.clear(); S.ouvert = true; S.tour = nouveauTour(); try { localStorage.setItem("vote-tour-final", S.tour); } catch {} diffuser(); rendre();
+document.getElementById("clore").onclick = async () => {
+  const { error } = await supabase.rpc("basculer_vote_affiches", { p_tour: TOUR, p_ouvert: !S.ouvert });
+  if (error) { alert("Pour clore ou rouvrir le vote, connecte-toi d'abord sur prof.questedu.ca (même navigateur)."); return; }
+  charger();
 };
 document.getElementById("plein").onclick = () => { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); };
-window.addEventListener("beforeunload", (e) => { if (S.votes.size) { e.preventDefault(); e.returnValue = ""; } });
 rendre();
+charger();
 </script>
 </body>
 </html>
