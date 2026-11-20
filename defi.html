@@ -6,7 +6,7 @@
 <title>Défi en direct — Quest</title>
 <meta name="theme-color" content="#D42A1C" />
 <link rel="icon" href="icon-192.png" />
-<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="./lib/qrcode-1.4.4.js"></script>
 <style>
 /* ============================================================
    Défi en direct — écran de l'enseignante (projeté en classe)
@@ -106,7 +106,7 @@ select, .seg{ width:100%; font:inherit; font-size:17px; padding:12px 14px; borde
 <div class="wrap" id="app"><div class="vide">Chargement…</div></div>
 
 <script type="module">
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+import { createClient } from "./lib/supabase-2.119.2.esm.js";
 
 const SUPABASE_URL = "https://gejmaxobebsamvfkkpoj.supabase.co";
 const SUPABASE_KEY = "sb_publishable_jqf5eYy0Coka5d0-E86JJQ_bCiQDyvD";

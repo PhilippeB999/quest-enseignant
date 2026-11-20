@@ -1,4 +1,4 @@
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+import { createClient } from "./lib/supabase-2.119.2.esm.js";
 
 const SUPABASE_URL = "https://gejmaxobebsamvfkkpoj.supabase.co";
 const SUPABASE_KEY = "sb_publishable_jqf5eYy0Coka5d0-E86JJQ_bCiQDyvD";
@@ -430,11 +430,11 @@ function renderLogin(message) {
     <div class="login">
       <div class="mk">🛡️</div>
       <h1>Espace enseignant</h1>
-      <p>Reçois un lien de connexion par courriel. Aucun mot de passe à retenir.</p>
+      <p>Reçois un code de connexion par courriel. Aucun mot de passe à retenir.</p>
       <form id="loginForm">
         <label for="email">Ton courriel</label>
         <input id="email" type="email" required placeholder="prenom.nom@exemple.ca" autocomplete="email" />
-        <button type="submit" id="loginBtn">M'envoyer un lien</button>
+        <button type="submit" id="loginBtn">M'envoyer un code</button>
         <p class="consent-notice">${CONSENT_NOTICE[LANG]}</p>
       </form>
       ${message ? `<div class="msg ${message.type}">${message.text}</div>` : ""}
@@ -458,11 +458,57 @@ function renderLogin(message) {
     if (error) {
       renderLogin({ type: "err", text: "Échec : " + error.message });
     } else {
-      renderLogin({ type: "ok", text: "Lien envoyé ! Ouvre ton courriel et clique le lien pour te connecter." });
+      renderCode(email);
     }
   });
   const demoBtn = document.getElementById("demoBtn");
   if (demoBtn) demoBtn.addEventListener("click", enterDemo);
+}
+
+/* Étape 2 : le code à 6 chiffres reçu par courriel.
+   Pourquoi un code et pas seulement le lien : sur les réseaux scolaires (Microsoft 365,
+   p. ex. la CSSRL), l'antivirus des courriels ouvre chaque lien pour l'analyser et
+   « consomme » le lien magique, qui n'est valide qu'une fois. Un code tapé à la main
+   ne peut pas être consommé ainsi. Le lien du courriel reste utilisable en secours. */
+function renderCode(email, message) {
+  root.innerHTML = `
+  <div class="login-wrap">
+    <div class="login">
+      <div class="mk">✉️</div>
+      <h1>Entre ton code</h1>
+      <p>Un code de connexion vient d'être envoyé à <strong>${esc(email)}</strong>. Il peut prendre une minute à arriver (vérifie aussi les courriels indésirables).</p>
+      <form id="codeForm">
+        <label for="code">Code reçu par courriel</label>
+        <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,9}" maxlength="9" required placeholder="123456" style="font-size:22px;letter-spacing:6px;text-align:center" />
+        <button type="submit" id="codeBtn">Me connecter</button>
+      </form>
+      ${message ? `<div class="msg ${message.type}">${message.text}</div>` : ""}
+      <div class="demo-cta">
+        <button type="button" id="resendBtn" class="demo-link">Renvoyer un code</button>
+        <button type="button" id="backBtn" class="demo-link">Changer d'adresse</button>
+      </div>
+    </div>
+  </div>`;
+  const input = document.getElementById("code");
+  input.focus();
+  document.getElementById("codeForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const token = input.value.replace(/\D/g, "");
+    const btn = document.getElementById("codeBtn");
+    btn.disabled = true; btn.textContent = "Vérification…";
+    const { error } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+    // Succès : onAuthStateChange (SIGNED_IN) charge le tableau de bord.
+    if (error) renderCode(email, { type: "err", text: "Code invalide ou expiré. Vérifie les chiffres, ou demande un nouveau code." });
+  });
+  document.getElementById("resendBtn").addEventListener("click", async () => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email, options: { emailRedirectTo: window.location.href.split("#")[0] }
+    });
+    renderCode(email, error
+      ? { type: "err", text: "Échec : " + error.message }
+      : { type: "ok", text: "Nouveau code envoyé. Utilise le plus récent." });
+  });
+  document.getElementById("backBtn").addEventListener("click", () => renderLogin());
 }
 
 /* ------------------ Mode démonstration public (sans connexion) ------------------

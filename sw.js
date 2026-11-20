@@ -4,8 +4,8 @@
    déployée arrive donc tout de suite — jamais de version périmée servie aux enseignants.
    On ne touche qu'aux fichiers du site : Supabase et le CDN passent sans interception. */
 
-const CACHE = "quest-enseignant-v20";
-const ASSETS = ["index.html", "app.js", "style.css", "icon-192.png"];
+const CACHE = "quest-enseignant-v21";
+const ASSETS = ["index.html", "app.js", "style.css", "icon-192.png", "lib/supabase-2.119.2.esm.js"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
