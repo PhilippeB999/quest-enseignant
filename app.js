@@ -469,7 +469,7 @@ function renderLogin(message) {
    Pourquoi un code et pas seulement le lien : sur les réseaux scolaires (Microsoft 365,
    p. ex. la CSSRL), l'antivirus des courriels ouvre chaque lien pour l'analyser et
    « consomme » le lien magique, qui n'est valide qu'une fois. Un code tapé à la main
-   ne peut pas être consommé ainsi. Le lien du courriel reste utilisable en secours. */
+   ne peut pas être consommé ainsi. Le courriel ne contient donc AUCUN lien (lien et code partagent le même jeton). */
 function renderCode(email, message) {
   root.innerHTML = `
   <div class="login-wrap">
