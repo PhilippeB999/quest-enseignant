@@ -59,7 +59,7 @@ h1{ font-size:clamp(24px, 2.6vw, 46px); line-height:1.08; margin:.3vw 0 0; }
 <body>
 <div class="page">
   <aside class="cote">
-    <div><div class="sur">CFP L'Envol · vote anonyme</div><h1>Quelle affiche pour vos élèves ?</h1></div>
+    <div><div class="sur">CFP L'Envol · vote anonyme</div><h1>Vote final : quelle affiche pour vos élèves ?</h1></div>
     <div class="qr"><div id="qr"></div><div class="url">questedu.ca/vote</div></div>
     <div class="compte" id="compte"><b id="nb">0</b><span id="nbtxt">vote reçu</span></div>
     <div class="outils">
@@ -83,12 +83,12 @@ const LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const URL_VOTE_LOCAL = location.origin + "/questedu-web/vote/";
 const IMG = LOCAL ? "/questedu-web/vote/" : "https://questedu.ca/vote/";
 
-const STYLES = [["A", "Le téléphone"], ["B", "Le personnage"], ["C", "Le défi"], ["D", "La compétition"]];
+const STYLES = [["A", "Le téléphone"], ["D", "La compétition"], ["E", "Le classement"], ["F", "L'évolution"]];
 const PROGS = [["s", "SASI", "SASIQuest"], ["p", "PAB", "PABQuest"]];
 
 const nouveauTour = () => Math.random().toString(36).slice(2, 8);
-let tour = null; try { tour = localStorage.getItem("vote-tour"); } catch {}
-if (!tour) { tour = nouveauTour(); try { localStorage.setItem("vote-tour", tour); } catch {} }
+let tour = null; try { tour = localStorage.getItem("vote-tour-final"); } catch {}
+if (!tour) { tour = nouveauTour(); try { localStorage.setItem("vote-tour-final", tour); } catch {} }
 /* Le tour survit à un rechargement : les téléphones renvoient alors leur vote tout seuls. */
 let hid = null; try { hid = localStorage.getItem("vote-hid"); } catch {}
 if (!hid) { hid = nouveauTour() + nouveauTour(); try { localStorage.setItem("vote-hid", hid); } catch {} }
@@ -147,7 +147,7 @@ function rendre() {
 document.getElementById("clore").onclick = () => { S.ouvert = !S.ouvert; diffuser(); rendre(); };
 document.getElementById("raz").onclick = () => {
   if (!confirm("Effacer tous les votes et recommencer ?")) return;
-  S.votes.clear(); S.ouvert = true; S.tour = nouveauTour(); try { localStorage.setItem("vote-tour", S.tour); } catch {} diffuser(); rendre();
+  S.votes.clear(); S.ouvert = true; S.tour = nouveauTour(); try { localStorage.setItem("vote-tour-final", S.tour); } catch {} diffuser(); rendre();
 };
 document.getElementById("plein").onclick = () => { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); };
 window.addEventListener("beforeunload", (e) => { if (S.votes.size) { e.preventDefault(); e.returnValue = ""; } });
