@@ -302,7 +302,9 @@ const MODULE_INFO = {
   dia_medication:{t:"Diabète — Médication et insuline",o:5},
   dia_alimentation:{t:"Diabète — Alimentation",o:6},
   dia_complications:{t:"Diabète — Complications et soins des pieds",o:7},
-  dia_quotidien:{t:"Diabète — Vivre avec le diabète au quotidien",o:8}
+  dia_quotidien:{t:"Diabète — Vivre avec le diabète au quotidien",o:8},
+  // InfectionsQuest — SASI 5325, compétence 8 (254-664), une seule compétence (préfixe inf_)
+  inf_prevention:{t:"Infections — Prévenir et contenir l'infection",o:1}
 };
 const moduleTitle = id => (MODULE_INFO[id] && MODULE_INFO[id].t) || id;
 const moduleOrder = id => (MODULE_INFO[id] ? MODULE_INFO[id].o : 999);
