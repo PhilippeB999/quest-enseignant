@@ -48,6 +48,16 @@ select, .seg{ width:100%; font:inherit; font-size:17px; padding:12px 14px; borde
 .segs button{ flex:1; min-width:70px; padding:12px; border-radius:12px; border:1px solid var(--ligne); background:#fff; font-weight:700; color:var(--texte); }
 .segs button.on{ background:var(--rouge); color:#fff; border-color:var(--rouge); }
 .resume{ margin-top:18px; padding:14px 16px; border-radius:12px; background:var(--sable); color:var(--texte); font-size:15px; min-height:48px; }
+.liste{ max-height:430px; overflow:auto; border:1px solid var(--ligne); border-radius:12px; background:#fff; margin-top:10px; }
+.liste label{ display:flex; gap:12px; align-items:flex-start; padding:11px 14px; border-bottom:1px solid var(--ligne); cursor:pointer; font-size:15px; line-height:1.35; color:var(--texte); }
+.liste label:last-child{ border-bottom:0; }
+.liste label:hover{ background:var(--sable); }
+.liste label.coche{ color:var(--encre); background:#FFF6F4; }
+.liste input{ width:20px; height:20px; accent-color:var(--rouge); flex:none; margin:0; }
+.liste .txt{ flex:1; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.badge{ flex:none; font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:var(--sable); color:var(--texte); white-space:nowrap; }
+.badge.p1{ background:#E8F3EC; color:#1E5E3A; } .badge.p2{ background:#FFF1D6; color:#7A5310; } .badge.p3{ background:var(--rose); color:var(--rouge-f); }
+.outils{ display:flex; gap:14px; align-items:center; margin-top:10px; font-size:14px; }
 .etapes li{ margin:0 0 14px; line-height:1.45; color:var(--texte); }
 .etapes b{ color:var(--encre); }
 
@@ -96,6 +106,17 @@ select, .seg{ width:100%; font:inherit; font-size:17px; padding:12px 14px; borde
 .suite{ max-width:760px; margin:0 auto; }
 .suite div{ display:flex; justify-content:space-between; padding:10px 16px; border-bottom:1px solid var(--ligne); font-size:19px; }
 .couronne{ font-size:44px; }
+/* Podium animé : 3e, puis 2e, puis 1re place, chacune monte à son tour. */
+.marche .bloc{ overflow:hidden; transition:height 1.1s cubic-bezier(.2,.9,.25,1.15); }
+.marche .info{ transition:opacity .6s ease, transform .6s ease; }
+.podium.anime .marche:not(.vu) .bloc{ height:0; }
+.podium.anime .marche:not(.vu) .info{ opacity:0; transform:translateY(16px); }
+.marche.vu .couronne{ animation:sautille 1.2s ease .9s 2; }
+@keyframes sautille{ 0%,100%{ transform:translateY(0) rotate(0) } 30%{ transform:translateY(-14px) rotate(-8deg) } 60%{ transform:translateY(0) rotate(6deg) } }
+.annonce{ text-align:center; font-size:28px; font-weight:800; color:var(--or); min-height:40px; margin-top:6px; }
+.suite{ transition:opacity .8s ease; }
+.suite.cache{ opacity:0; }
+@media (prefers-reduced-motion: reduce){ .marche .bloc,.marche .info,.suite{ transition:none; } .marche.vu .couronne{ animation:none; } }
 .vide{ text-align:center; padding:60px 20px; color:var(--gris); font-size:20px; }
 .erreur{ color:var(--rouge); font-weight:700; margin-top:12px; }
 .discret{ background:none; border:0; color:var(--gris); text-decoration:underline; font-size:15px; }
@@ -115,7 +136,7 @@ const URL_JOUEUR = "https://questedu.ca/defi/";
 
 /* Les applications Quest dont on peut piger les questions (data.js public de chaque sous-domaine). */
 const APPS = [
-  ["Santé", [["sasi","SASIQuest"],["pab","PABQuest"],["geriatrie","GériatrieQuest"],["diabete","DiabèteQuest"],["parkinson","ParkinsonQuest"],["pediatrie","PédiatrieQuest"],["perinatalite","PérinatalitéQuest"],["santementale","SantéMentaleQuest"],["cardio","CardioQuest"],["renal","RénalQuest"],["physio","PhysioQuest"]]],
+  ["Santé", [["sasi","SASIQuest"],["pab","PABQuest"],["geriatrie","GériatrieQuest"],["diabete","DiabèteQuest"],["parkinson","ParkinsonQuest"],["pediatrie","PédiatrieQuest"],["perinatalite","PérinatalitéQuest"],["santementale","SantéMentaleQuest"],["cardio","CardioQuest"],["renal","RénalQuest"],["infections","InfectionsQuest"],["physio","PhysioQuest"]]],
   ["Autres programmes", [["chantier","ChantierQuest"],["soudage","SoudageQuest"],["plomberie","PlomberieQuest"],["mecanique","MécaniqueAutoQuest"],["infographie","InfographieQuest"],["electricite","ÉlectricitéQuest"],["charpenterie","CharpenterieQuest"],["ebenisterie","ÉbénisterieQuest"],["coiffure","CoiffureQuest"],["compta","ComptaQuest"],["secretariat","SecrétariatQuest"],["secmed","SecrétariatMédicalQuest"],["voyage","VoyageQuest"]]],
 ];
 const NOM_APP = Object.fromEntries(APPS.flatMap(([, l]) => l));
@@ -144,7 +165,10 @@ const ecrire = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } c
 /* ------------------------------------------------------------------ état */
 const S = {
   ecran: "config",
-  cfg: Object.assign({ app: "geriatrie", comp: "tout", prog: "tous", nb: 5, duree: 20, lang: "fr" }, lire("defi_cfg", {})),
+  cfg: Object.assign({ app: "geriatrie", comp: "tout", prog: "tous", palier: "tous", mode: "hasard", nb: 5, duree: 20, lang: "fr" }, lire("defi_cfg", {})),
+  sel: new Set(),        // questions cochées (clé = énoncé français), mémorisées par application
+  liste: [],             // questions affichées dans la liste à cocher
+  anim: [],              // minuteries de l'animation du podium
   banque: null,          // { app, comps:[{id,titre,questions:[...]}] } — questions jouables (choix multiple / vrai-faux / situation)
   chargement: false, erreurChargement: "",
   nip: null, canal: null, hid: Math.random().toString(36).slice(2, 10), seq: 0,
@@ -170,6 +194,8 @@ async function chargerBanque(app) {
     S.banque = { app, comps };
     const ids = comps.map((c) => c.id);
     if (S.cfg.comp !== "tout" && !ids.includes(S.cfg.comp)) S.cfg.comp = "tout";
+    if (S.cfg.palier !== "tous" && !paliers().includes(S.cfg.palier)) S.cfg.palier = "tous";
+    S.sel = new Set(lire("defi_sel_" + app, []));
   } catch (e) {
     S.erreurChargement = "Impossible de charger les questions de cette application. Vérifiez la connexion Internet.";
   }
@@ -185,19 +211,27 @@ function aProgrammes() { return !!S.banque && S.banque.comps.some((c) => c.quest
 function bassin() {
   if (!S.banque) return [];
   const comps = S.cfg.comp === "tout" ? S.banque.comps : S.banque.comps.filter((c) => c.id === S.cfg.comp);
+  const vus = new Set();
   return comps.flatMap((c) => c.questions).filter((q) => {
+    if (vus.has(q.fr)) return false;                       // un même énoncé une seule fois
+    vus.add(q.fr);
+    if (S.cfg.palier !== "tous" && q.palier !== S.cfg.palier) return false;
     if (S.cfg.prog === "tous" || !Array.isArray(q.programmes)) return true;
     return q.programmes.includes(S.cfg.prog);
   });
 }
+function paliers() {
+  if (!S.banque) return [];
+  return [...new Set(S.banque.comps.flatMap((c) => c.questions.map((q) => q.palier)))].filter((p) => p != null).sort();
+}
+/* Questions qui seront jouées : cochées (dans l'ordre de la liste) ou pigées au hasard. */
+function aJouer() {
+  if (S.cfg.mode === "choix") return bassin().filter((q) => S.sel.has(q.fr));
+  return melanger(bassin()).slice(0, S.cfg.nb);
+}
 function preparerQuestions() {
   const L = S.cfg.lang;
-  // Mélange en évitant de piger deux fois le même énoncé.
-  const vus = new Set(); const choisies = [];
-  for (const q of melanger(bassin())) {
-    const cle = q.fr; if (vus.has(cle)) continue; vus.add(cle); choisies.push(q);
-    if (choisies.length >= S.cfg.nb) break;
-  }
+  const choisies = aJouer();
   return choisies.map((q) => {
     const txt = (o) => (L === "en" ? o.en : o.fr) || o.fr || "";
     if ((q.type || "qcm") === "tf") {
@@ -254,6 +288,7 @@ function etatPublic() {
     const q = S.questions[S.i];
     e.r = { i: S.i, total: S.questions.length, bon: q.bon, choix: q.choix, texte: q.texte };
   }
+  if (S.phase === "fin" && S.suspense) e.suspense = true;
   if (S.phase === "fin") e.podium = classement().slice(0, 3).map((j) => ({ ...totemDe(j.n, j.a, S.cfg.lang), pts: j.pts }));
   return e;
 }
@@ -297,7 +332,7 @@ function finirQuestion() {
 }
 function suivante() {
   if (S.i + 1 < S.questions.length) lancerQuestion(S.i + 1);
-  else { S.phase = "fin"; diffuser(); rendre(); }
+  else { S.phase = "fin"; rendre(); }   // rendrePodium diffuse lui-même (avec ou sans suspense)
 }
 async function creerDefi() {
   S.questions = preparerQuestions();
@@ -307,13 +342,15 @@ async function creerDefi() {
   S.phase = "lobby"; S.i = -1; S.ecran = "partie";
   diffuser(); rendre();
 }
+function arreterAnimation() { S.anim.forEach(clearTimeout); S.anim = []; S.suspense = false; document.querySelectorAll(".confettis").forEach((c) => c.remove()); }
 function rejouer() {
+  arreterAnimation();
   S.questions = preparerQuestions();
   for (const j of S.joueurs.values()) { j.pts = 0; j.gain = 0; j.ok = null; }
   S.phase = "lobby"; S.i = -1; diffuser(); rendre();
 }
 async function quitter() {
-  clearInterval(S.pouls); clearInterval(S.minuterie);
+  clearInterval(S.pouls); clearInterval(S.minuterie); arreterAnimation();
   if (S.canal) { S.phase = "fin"; S.joueurs.clear(); try { await supabase.removeChannel(S.canal); } catch {} }
   S.canal = null; S.nip = null; S.ecran = "config"; S.phase = "lobby"; rendre();
 }
@@ -351,29 +388,103 @@ function rendreConfig() {
       <label class="champ" for="comp">Compétence</label>
       ${S.chargement ? `<div class="resume">Chargement des questions…</div>` : S.erreurChargement ? `<div class="erreur">${esc(S.erreurChargement)}</div>` : `<select id="comp">${optsComp}</select>`}
       ${aProgrammes() ? `<label class="champ">Programme</label>${seg("prog", ["tous", "pab", "sasi"], (v) => ({ tous: "PAB et SASI", pab: "PAB", sasi: "SASI" })[v])}` : ""}
-      <label class="champ">Nombre de questions</label>${seg("nb", [5, 10, 15])}
+      ${paliers().length > 1 ? `<label class="champ">Palier</label>${seg("palier", ["tous", ...paliers()], (v) => (v === "tous" ? "Tous" : "Palier " + v))}` : ""}
+      <label class="champ">Questions</label>${seg("mode", ["hasard", "choix"], (v) => (v === "hasard" ? "🎲 Pige au hasard" : "☑️ Je les choisis"))}
+      ${c.mode === "hasard" ? `<label class="champ">Nombre de questions</label>${seg("nb", [5, 10, 15])}` : S.banque ? listeQuestions() : ""}
       <label class="champ">Temps par question</label>${seg("duree", [15, 20, 30], (v) => v + " s")}
       <label class="champ">Langue</label>${seg("lang", ["fr", "en"], (v) => (v === "fr" ? "Français" : "English"))}
-      <div class="resume">${S.banque ? `<b>${n}</b> question${n > 1 ? "s" : ""} disponible${n > 1 ? "s" : ""} — ${Math.min(n, c.nb)} seront pigées au hasard. Les mises en situation ont 10 s de plus.` : "&nbsp;"}</div>
-      <div style="margin-top:22px"><button class="btn" id="creer" ${!S.banque || !n ? "disabled" : ""}>Créer le défi →</button></div>
+      <div class="resume" id="resume"></div>
+      <div style="margin-top:22px"><button class="btn" id="creer">Créer le défi →</button></div>
     </div>
     <div class="carte">
       <div class="sur">Comment ça marche</div>
       <ol class="etapes" style="padding-left:20px;margin:16px 0 0">
         <li><b>Projetez cette page.</b> Un code à 4 chiffres et un QR code s'affichent.</li>
         <li><b>Les élèves scannent</b> ou vont sur <b>questedu.ca/defi</b>. Chacun reçoit un totem : aucun nom, aucun compte.</li>
-        <li><b>Vous lancez les questions.</b> Les points dépendent de la bonne réponse et de la rapidité.</li>
+        <li><b>Vous lancez les questions</b> : pigées au hasard, ou celles que vous avez cochées. Les points dépendent de la bonne réponse et de la rapidité.</li>
         <li><b>Après chaque question,</b> la répartition des réponses et l'explication s'affichent. C'est le moment d'en parler.</li>
-        <li><b>À la fin,</b> le podium. Puis tout disparaît : rien n'est conservé.</li>
+        <li><b>À la fin,</b> le podium se dévoile : 3<sup>e</sup>, 2<sup>e</sup>, puis 1<sup>re</sup> place. Ensuite tout disparaît : rien n'est conservé.</li>
       </ol>
     </div>
   </div>`;
+  majResume();
+  $app.querySelectorAll(".liste input").forEach((cb) => cb.addEventListener("change", () => {
+    const q = S.liste[Number(cb.dataset.k)];
+    if (cb.checked) S.sel.add(q.fr); else S.sel.delete(q.fr);
+    cb.closest("label").classList.toggle("coche", cb.checked);
+    memoriserSel(); majResume();
+  }));
+  $app.querySelectorAll("[data-tout]").forEach((b) => b.addEventListener("click", () => {
+    const oui = b.dataset.tout === "1";
+    S.liste.forEach((q) => (oui ? S.sel.add(q.fr) : S.sel.delete(q.fr)));
+    memoriserSel(); rendre();
+  }));
   $app.querySelector("#choixApp").addEventListener("change", (e) => { S.cfg.app = e.target.value; S.cfg.comp = "tout"; chargerBanque(S.cfg.app); });
   const comp = $app.querySelector("#comp"); if (comp) comp.addEventListener("change", (e) => { S.cfg.comp = e.target.value; rendre(); });
   $app.querySelectorAll("[data-seg]").forEach((b) => b.addEventListener("click", () => {
     const k = b.dataset.seg; const v = b.dataset.val; S.cfg[k] = /^\d+$/.test(v) ? Number(v) : v; rendre();
   }));
   const cr = $app.querySelector("#creer"); if (cr) cr.addEventListener("click", () => { cr.disabled = true; cr.textContent = "Connexion…"; creerDefi(); });
+}
+
+const TYPES = { tf: "Vrai ou faux", scenario: "Mise en situation", qcm: "Choix multiple" };
+function listeQuestions() {
+  const L = S.cfg.lang;
+  S.liste = bassin();
+  if (!S.liste.length) return `<div class="resume">Aucune question pour ces filtres.</div>`;
+  const lignes = S.liste.map((q, k) => {
+    const on = S.sel.has(q.fr);
+    return `<label class="${on ? "coche" : ""}"><input type="checkbox" data-k="${k}" ${on ? "checked" : ""}>`
+      + `<span class="badge p${q.palier}">P${q.palier}</span><span class="txt">${esc((L === "en" ? q.en : q.fr) || q.fr)}</span>`
+      + `<span class="badge">${TYPES[q.type || "qcm"] || ""}</span></label>`;
+  }).join("");
+  return `<div class="outils"><button class="discret" data-tout="1">Tout cocher (${S.liste.length})</button><button class="discret" data-tout="0">Tout décocher</button></div>
+    <div class="liste">${lignes}</div>`;
+}
+function memoriserSel() { if (S.banque) ecrire("defi_sel_" + S.banque.app, [...S.sel]); }
+function majResume() {
+  const el = document.getElementById("resume"), bt = document.getElementById("creer");
+  if (!el || !bt) return;
+  const n = bassin().length;
+  let txt = "&nbsp;", nb = 0;
+  if (S.banque && S.cfg.mode === "choix") {
+    nb = bassin().filter((q) => S.sel.has(q.fr)).length;
+    txt = nb ? `<b>${nb}</b> question${nb > 1 ? "s" : ""} cochée${nb > 1 ? "s" : ""}, jouée${nb > 1 ? "s" : ""} dans l'ordre de la liste. Les mises en situation ont 10 s de plus.`
+             : `Cochez les questions à jouer.`;
+  } else if (S.banque) {
+    nb = Math.min(n, S.cfg.nb);
+    txt = `<b>${n}</b> question${n > 1 ? "s" : ""} disponible${n > 1 ? "s" : ""} — ${nb} seront pigées au hasard. Les mises en situation ont 10 s de plus.`;
+  }
+  el.innerHTML = txt;
+  bt.disabled = !nb;
+}
+
+/* Confettis aux couleurs Quest (rien si l'appareil demande moins d'animations). */
+function confettis() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const cv = document.createElement("canvas"); cv.className = "confettis";
+  cv.style.cssText = "position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:50";
+  document.body.appendChild(cv);
+  const ctx = cv.getContext("2d"), W = (cv.width = innerWidth), H = (cv.height = innerHeight);
+  const couleurs = ["#D42A1C", "#BF831A", "#3F7A8A", "#6B3FA0", "#2E8B57", "#F2C14E"];
+  const p = Array.from({ length: 220 }, () => ({
+    x: W / 2 + (Math.random() - 0.5) * W * 0.3, y: H * 0.35, vx: (Math.random() - 0.5) * 16, vy: -Math.random() * 15 - 5,
+    r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.3, w: 8 + Math.random() * 8, h: 5 + Math.random() * 5,
+    c: couleurs[Math.floor(Math.random() * couleurs.length)],
+  }));
+  const debut = performance.now();
+  setTimeout(() => cv.remove(), 7600);   // filet de sécurité si l'onglet passe en arrière-plan
+  (function image(t) {
+    if (!cv.isConnected) return;
+    const age = t - debut;
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalAlpha = Math.max(0, Math.min(1, (7000 - age) / 1500));
+    for (const o of p) {
+      o.vy += 0.32; o.vx *= 0.99; o.x += o.vx; o.y += o.vy; o.r += o.vr;
+      ctx.save(); ctx.translate(o.x, o.y); ctx.rotate(o.r); ctx.fillStyle = o.c; ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h); ctx.restore();
+    }
+    if (age < 7000) requestAnimationFrame(image); else cv.remove();
+  })(debut);
 }
 
 function qrSvg(texte) {
@@ -441,14 +552,31 @@ function rendreResultat() {
 function rendrePodium() {
   const cl = classement();
   const t = (j) => totemDe(j.n, j.a, S.cfg.lang);
-  const marche = (j, rang) => j ? `<div class="marche m${rang}">${rang === 1 ? `<div class="couronne">👑</div>` : ""}<div class="nom">${t(j).emoji} ${esc(t(j).nom)}</div><div class="pts">${j.pts} points</div><div class="bloc">${rang}</div></div>` : `<div class="marche m${rang}"></div>`;
+  const marche = (j, rang) => j ? `<div class="marche m${rang}" id="m${rang}"><div class="info">${rang === 1 ? `<div class="couronne">👑</div>` : ""}<div class="nom">${t(j).emoji} ${esc(t(j).nom)}</div><div class="pts">${j.pts} points</div></div><div class="bloc">${rang}</div></div>` : `<div class="marche m${rang}"></div>`;
   const reste = cl.slice(3).map((j, k) => `<div><span>${k + 4}. ${t(j).emoji} ${esc(t(j).nom)}</span><b>${j.pts}</b></div>`).join("");
+  const anime = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  arreterAnimation();
   $app.innerHTML = `${entete(`<button class="btn sec" id="rejouer">Rejouer avec le même groupe</button> <button class="discret" id="quitter">Terminer</button>`)}
-  <div style="text-align:center"><div class="sur">${esc(NOM_APP[S.cfg.app])} · ${S.questions.length} questions</div><h1>Le podium</h1></div>
-  ${cl.length ? `<div class="podium">${marche(cl[1], 2)}${marche(cl[0], 1)}${marche(cl[2], 3)}</div>` : `<div class="vide">Aucun joueur.</div>`}
-  ${reste ? `<div class="suite carte">${reste}</div>` : ""}`;
+  <div style="text-align:center"><div class="sur">${esc(NOM_APP[S.cfg.app])} · ${S.questions.length} questions</div><h1>Le podium</h1><div class="annonce" id="annonce"></div></div>
+  ${cl.length ? `<div class="podium ${anime ? "anime" : ""}">${marche(cl[1], 2)}${marche(cl[0], 1)}${marche(cl[2], 3)}</div>` : `<div class="vide">Aucun joueur.</div>`}
+  ${reste ? `<div class="suite carte ${anime ? "cache" : ""}" id="reste">${reste}</div>` : ""}`;
   $app.querySelector("#rejouer").addEventListener("click", rejouer);
   $app.querySelector("#quitter").addEventListener("click", quitter);
+  if (!anime || !cl.length) { diffuser(); return; }
+  S.suspense = true; diffuser();
+
+  // Dévoilement : 3e, puis 2e, roulement de suspense, puis la 1re place et les confettis.
+  const annonce = (txt) => { const a = document.getElementById("annonce"); if (a) a.textContent = txt; };
+  const montrer = (r) => { const m = document.getElementById("m" + r); if (m) m.classList.add("vu"); };
+  const etapes = [];
+  let ms = 700;
+  if (cl[2]) { etapes.push([ms, () => annonce("En 3e place…")], [ms + 500, () => montrer(3)]); ms += 2300; }
+  if (cl[1]) { etapes.push([ms, () => annonce("En 2e place…")], [ms + 500, () => montrer(2)]); ms += 2300; }
+  etapes.push([ms, () => annonce("Et en première place…")]);
+  etapes.push([ms + 1600, () => { montrer(1); annonce("Bravo ! 🎉"); confettis(); }]);
+  etapes.push([ms + 2800, () => { const r = document.getElementById("reste"); if (r) r.classList.remove("cache"); }]);
+  etapes.push([ms + 1700, () => { S.suspense = false; diffuser(); }]);   // les téléphones montrent leur rang avec la 1re place
+  S.anim = etapes.map(([ms, f]) => setTimeout(f, ms));
 }
 
 /* Raccourci clavier pour la télécommande de présentation : → ou Espace = étape suivante. */
