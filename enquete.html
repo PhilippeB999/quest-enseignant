@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Enquête clinique — Quest</title>
+<meta name="theme-color" content="#D42A1C" />
+<link rel="icon" href="icon-192.png" />
+<script src="./lib/qrcode-1.4.4.js"></script>
+<script src="./enquetes.js"></script>
+<style>
+/* ============================================================
+   Enquête clinique — écran de l'enseignante (projeté en classe)
+   Jeu coopératif : toute la classe contre le cas, aucun classement.
+   Aucune donnée enregistrée : tout circule par diffusion Supabase
+   Realtime (canal « enquete-<NIP> ») et disparaît à la fin.
+   ============================================================ */
+:root{
+  --rouge:#D42A1C; --rouge-f:#A81E12; --encre:#1B1614; --texte:#4A423E; --gris:#8C8177;
+  --or:#BF831A; --turq:#3F7A8A; --violet:#6B3FA0; --vert:#2E8B57;
+  --fond:#FAF7F6; --carte:#FFFDF9; --ligne:#E7DFD0; --rose:#FBE7E4; --sable:#F4EFEA;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){ :root{ color-scheme: light; } html,body{ background:#FAF7F6 !important; color:#1B1614 !important; } }
+*{ box-sizing:border-box; }
+html,body{ margin:0; background:var(--fond); color:var(--encre); font-family:"Trebuchet MS", system-ui, sans-serif; }
+body{ min-height:100vh; }
+button{ font:inherit; cursor:pointer; }
+.wrap{ max-width:1280px; margin:0 auto; padding:24px 40px 40px; }
+.top{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px; }
+.marque{ display:flex; align-items:center; gap:12px; font-weight:700; font-size:20px; }
+.marque .mk{ width:40px; height:40px; border-radius:12px; background:var(--rouge); color:#fff; display:grid; place-items:center; font-size:22px; }
+.marque small{ display:block; font-size:11px; letter-spacing:2px; color:var(--or); }
+.btn{ border:0; border-radius:14px; padding:14px 26px; font-weight:700; font-size:18px; background:var(--rouge); color:#fff; box-shadow:0 2px 8px rgba(27,22,20,.12); }
+.btn:hover{ background:var(--rouge-f); }
+.btn:disabled{ opacity:.45; cursor:not-allowed; }
+.btn.sec{ background:var(--carte); color:var(--encre); border:1px solid var(--ligne); box-shadow:none; }
+.btn.sec:hover{ background:var(--sable); }
+.carte{ background:var(--carte); border:1px solid var(--ligne); border-radius:20px; box-shadow:0 2px 10px rgba(27,22,20,.06); }
+h1{ font-size:40px; margin:0 0 8px; }
+.sur{ font-size:12px; font-weight:700; letter-spacing:3px; color:var(--or); text-transform:uppercase; }
+.muted{ color:var(--gris); }
+.vide{ text-align:center; padding:60px 20px; color:var(--gris); font-size:20px; }
+.erreur{ color:var(--rouge); font-weight:700; margin-top:12px; }
+.discret{ background:none; border:0; color:var(--gris); text-decoration:underline; font-size:15px; }
+
+/* ---- Configuration ---- */
+.config{ display:grid; grid-template-columns: 1.3fr 1fr; gap:28px; align-items:start; }
+.config .carte{ padding:28px; }
+label.champ{ display:block; font-weight:700; margin:18px 0 8px; }
+.segs{ display:flex; gap:8px; flex-wrap:wrap; }
+.segs button{ flex:1; min-width:70px; padding:12px; border-radius:12px; border:1px solid var(--ligne); background:#fff; font-weight:700; color:var(--texte); }
+.segs button.on{ background:var(--rouge); color:#fff; border-color:var(--rouge); }
+.resume{ margin-top:18px; padding:14px 16px; border-radius:12px; background:var(--sable); color:var(--texte); font-size:15px; min-height:48px; }
+.groupe{ margin-bottom:18px; padding:14px 18px; border-radius:14px; background:#E8F3EC; color:#1E5E3A; font-weight:700; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.cas{ border:1px solid var(--ligne); border-radius:12px; background:#fff; margin-top:10px; max-height:470px; overflow:auto; }
+.cas button{ display:flex; width:100%; gap:12px; align-items:center; text-align:left; padding:13px 16px; border:0; border-bottom:1px solid var(--ligne); background:#fff; color:var(--texte); font-size:16px; }
+.cas button:last-child{ border-bottom:0; }
+.cas button:hover{ background:var(--sable); }
+.cas button.on{ background:#FFF6F4; color:var(--encre); box-shadow:inset 5px 0 0 var(--rouge); }
+.cas .titre{ flex:1; font-weight:700; }
+.cas .titre small{ display:block; font-weight:400; color:var(--gris); font-size:13px; margin-top:2px; }
+.badge{ flex:none; font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; background:var(--sable); color:var(--texte); white-space:nowrap; }
+.badge.pab{ background:#FFF1D6; color:#7A5310; } .badge.sasi{ background:#E3EEF1; color:#2B5764; } .badge.deux{ background:#EFE7F7; color:#4E2C78; }
+.badge.joue{ background:#E8F3EC; color:#1E5E3A; }
+.etapes li{ margin:0 0 14px; line-height:1.45; color:var(--texte); }
+.etapes b{ color:var(--encre); }
+
+/* ---- Salle d'attente ---- */
+.salle{ display:grid; grid-template-columns: 420px 1fr; gap:32px; align-items:start; }
+.rejoindre{ padding:28px; text-align:center; }
+.rejoindre .url{ font-size:26px; font-weight:700; margin:8px 0 4px; }
+.nip{ font-size:96px; font-weight:800; letter-spacing:10px; color:var(--rouge); line-height:1; margin:8px 0 18px; }
+.qr svg{ width:240px; height:240px; }
+.joueurs{ padding:28px; min-height:420px; }
+.compte{ font-size:56px; font-weight:800; color:var(--encre); }
+.totems{ display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+.totem{ padding:10px 16px; border-radius:999px; background:var(--rose); color:var(--rouge-f); font-weight:700; font-size:18px; animation:pop .35s ease; }
+@keyframes pop{ from{ transform:scale(.6); opacity:0 } to{ transform:scale(1); opacity:1 } }
+
+/* ---- Bandeau patient + jauge (permanent pendant l'enquête) ---- */
+.bandeau{ display:flex; align-items:center; gap:22px; padding:14px 20px; margin-bottom:22px; }
+.bandeau .pat{ display:flex; align-items:center; gap:12px; flex:none; max-width:46%; }
+.bandeau .pat .ic{ width:46px; height:46px; border-radius:50%; background:var(--sable); display:grid; place-items:center; font-size:24px; flex:none; }
+.bandeau .pat b{ display:block; font-size:19px; color:var(--encre); }
+.bandeau .pat span{ color:var(--gris); font-size:14px; }
+.jauge{ flex:1; display:flex; align-items:center; gap:14px; }
+.jauge .lbl{ font-size:12px; font-weight:700; letter-spacing:2px; color:var(--gris); text-transform:uppercase; white-space:nowrap; }
+.jauge .piste{ flex:1; height:24px; border-radius:99px; background:var(--sable); border:1px solid var(--ligne); overflow:hidden; }
+.jauge .rempli{ height:100%; border-radius:99px; transition: width 1.6s cubic-bezier(.3,.8,.3,1), background-color 1.6s ease; }
+.jauge .val{ font-weight:800; font-size:24px; min-width:58px; text-align:right; }
+.jauge .etiq{ padding:7px 14px; border-radius:999px; color:#fff; font-weight:700; font-size:15px; white-space:nowrap; transition:background-color 1.6s ease; }
+.e-crit{ background:var(--rouge); } .e-preo{ background:var(--or); } .e-stab{ background:var(--turq); } .e-amel{ background:var(--vert); }
+.delta{ font-weight:800; font-size:17px; padding:5px 11px; border-radius:999px; animation:pop .5s ease 1.2s both; white-space:nowrap; }
+.delta.mont{ background:#E8F3EC; color:#1E5E3A; } .delta.stab{ background:var(--sable); color:var(--texte); } .delta.desc{ background:var(--rose); color:var(--rouge-f); }
+
+/* ---- Dossier, indices, votes ---- */
+.qhaut{ display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.qnum{ font-size:18px; font-weight:700; color:var(--gris); }
+.chrono{ width:104px; height:104px; border-radius:50%; background:var(--rouge); color:#fff; display:grid; place-items:center; font-size:44px; font-weight:800; flex:none; }
+.chrono.fin{ background:var(--encre); }
+.dossier{ padding:30px 34px; border-left:10px solid var(--turq); }
+.dossier .ligne1{ display:flex; gap:18px; flex-wrap:wrap; align-items:baseline; }
+.dossier .nom{ font-size:36px; font-weight:800; }
+.dossier .meta{ font-size:20px; color:var(--texte); }
+.dossier p{ font-size:28px; line-height:1.45; margin:18px 0 0; }
+.dossier.petit p{ font-size:20px; margin-top:10px; }
+.dossier.petit .nom{ font-size:24px; }
+.indice{ padding:30px 34px; display:flex; gap:26px; align-items:flex-start; animation:glisse .6s ease; }
+.indice .ico{ width:86px; height:86px; border-radius:22px; display:grid; place-items:center; font-size:46px; flex:none; color:#fff; }
+.indice .type{ font-size:14px; font-weight:700; letter-spacing:3px; text-transform:uppercase; }
+.indice p{ font-size:30px; line-height:1.4; margin:8px 0 0; font-weight:700; }
+.indice.petit{ padding:18px 24px; gap:18px; animation:none; }
+.indice.petit .ico{ width:56px; height:56px; font-size:30px; border-radius:16px; }
+.indice.petit p{ font-size:20px; }
+@keyframes glisse{ from{ transform:translateY(24px); opacity:0 } to{ transform:none; opacity:1 } }
+.t-signes .ico{ background:var(--rouge); } .t-signes .type{ color:var(--rouge); }
+.t-parole .ico{ background:var(--violet); } .t-parole .type{ color:var(--violet); }
+.t-observation .ico{ background:var(--turq); } .t-observation .type{ color:var(--turq); }
+.t-resultat .ico{ background:var(--vert); } .t-resultat .type{ color:var(--vert); }
+.t-dossier .ico{ background:var(--or); } .t-dossier .type{ color:var(--or); }
+.enonce{ font-size:34px; line-height:1.25; font-weight:700; margin:22px 0 22px; }
+.choix{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.ch{ display:flex; align-items:center; gap:18px; padding:20px 22px; border-radius:18px; color:#fff; font-size:23px; font-weight:700; min-height:100px; position:relative; overflow:hidden; line-height:1.3; }
+.ch .lettre{ width:50px; height:50px; border-radius:14px; background:rgba(255,255,255,.22); display:grid; place-items:center; font-size:25px; flex:none; }
+.ch .barre{ position:absolute; left:0; bottom:0; height:8px; background:rgba(255,255,255,.6); transition:width 1s ease; }
+.ch .n{ margin-left:auto; font-size:30px; padding-left:10px; }
+.c0{ background:var(--rouge); } .c1{ background:var(--turq); } .c2{ background:var(--or); } .c3{ background:var(--violet); }
+.ch.pale{ opacity:.3; }
+.ch.bon{ outline:6px solid var(--vert); outline-offset:3px; }
+.reponses{ margin-top:20px; font-size:20px; color:var(--texte); font-weight:700; }
+.boites{ display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:22px; }
+.boite{ padding:18px 22px; border-radius:16px; font-size:20px; line-height:1.45; }
+.boite b{ display:block; font-size:13px; letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; }
+.boite.suite{ background:#E3EEF1; color:#22414A; } .boite.suite b{ color:var(--turq); }
+.boite.pq{ background:#E8F3EC; color:#1E4B31; } .boite.pq b{ color:var(--vert); }
+.bas{ display:flex; justify-content:space-between; align-items:center; margin-top:24px; gap:16px; }
+.secret{ text-align:center; padding:50px 30px; }
+.secret .gros{ font-size:84px; }
+.secret .compte{ font-size:72px; color:var(--rouge); }
+
+/* ---- Dénouement ---- */
+.revel{ text-align:center; padding:34px; position:relative; overflow:hidden; }
+.revel .avant{ font-size:26px; font-weight:700; color:var(--gris); }
+.revel .diag{ font-size:44px; font-weight:800; color:var(--rouge); margin:12px 0 10px; line-height:1.15; }
+.revel .texte{ font-size:22px; line-height:1.5; color:var(--texte); max-width:980px; margin:0 auto; }
+.revel .sceau{ font-size:70px; }
+.devoile{ transition:opacity .9s ease, transform .9s ease, filter .9s ease; }
+.cache .devoile{ opacity:0; transform:translateY(14px); filter:blur(6px); }
+.cache2 .devoile2{ opacity:0; transform:translateY(14px); }
+.devoile2{ transition:opacity .8s ease, transform .8s ease; }
+.fin3{ display:grid; grid-template-columns:1.1fr 1fr; gap:22px; margin-top:22px; }
+.fin3 .carte{ padding:24px 26px; }
+.hyp{ display:flex; align-items:center; gap:12px; margin:12px 0; font-size:19px; }
+.hyp .nomh{ width:46%; font-weight:700; }
+.hyp .p{ flex:1; height:30px; background:var(--sable); border-radius:10px; overflow:hidden; }
+.hyp .p div{ height:100%; background:var(--gris); border-radius:10px; transition:width 1.2s ease; }
+.hyp.bonne .nomh{ color:var(--vert); } .hyp.bonne .p div{ background:var(--vert); }
+.hyp .n{ width:40px; text-align:right; font-weight:800; }
+.retenir{ margin:10px 0 0; padding-left:22px; }
+.retenir li{ font-size:19px; line-height:1.45; margin-bottom:12px; color:var(--texte); }
+.retenir li b{ color:var(--encre); }
+@media (prefers-reduced-motion: reduce){ .devoile,.devoile2,.jauge .rempli,.hyp .p div,.ch .barre{ transition:none; } .indice,.totem{ animation:none; } }
+@media (max-width: 900px){ .config,.salle,.fin3,.boites{ grid-template-columns:1fr; } .choix{ grid-template-columns:1fr; } .enonce{ font-size:26px; } .wrap{ padding:18px; } .bandeau{ flex-wrap:wrap; } .bandeau .pat{ max-width:none; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="vide">Chargement…</div></div>
+
+<script type="module">
+import { createClient } from "./lib/supabase-2.119.2.esm.js";
+
+const SUPABASE_URL = "https://gejmaxobebsamvfkkpoj.supabase.co";
+const SUPABASE_KEY = "sb_publishable_jqf5eYy0Coka5d0-E86JJQ_bCiQDyvD";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const URL_JOUEUR = "https://questedu.ca/enquete/";
+const CAS = Array.isArray(window.ENQUETES) ? window.ENQUETES : (typeof ENQUETES !== "undefined" ? ENQUETES : []);
+
+/* Totems : MÊMES listes que le Défi et les apps élèves. Le joueur n'envoie que des indices ;
+   l'écran projeté reconstruit le nom lui-même : personne ne peut afficher un texte libre. */
+const TOTEM_NOUNS = [["🦊","Renard","Fox","m"],["🦦","Loutre","Otter","f"],["🦫","Castor","Beaver","m"],["🦉","Hibou","Owl","m"],["🦡","Blaireau","Badger","m"],["🐺","Loup","Wolf","m"],["🦅","Aigle","Eagle","m"],["🐿️","Écureuil","Squirrel","m"],["🐗","Sanglier","Boar","m"],["🦔","Hérisson","Hedgehog","m"],["🐻","Ours","Bear","m"],["🦌","Cerf","Stag","m"],["🦆","Canard","Duck","m"],["🐇","Lièvre","Hare","m"],["🐢","Tortue","Turtle","f"],["🐸","Grenouille","Frog","f"],["🐝","Abeille","Bee","f"],["🐜","Fourmi","Ant","f"]];
+const TOTEM_ADJ = [["Vaillant","Vaillante","Valiant"],["Rusé","Rusée","Cunning"],["Débrouillard","Débrouillarde","Resourceful"],["Malin","Maligne","Clever"],["Adroit","Adroite","Deft"],["Curieux","Curieuse","Curious"],["Ingénieux","Ingénieuse","Ingenious"],["Tenace","Tenace","Tenacious"],["Habile","Habile","Skillful"],["Vif","Vive","Quick"],["Futé","Futée","Sharp"],["Astucieux","Astucieuse","Astute"],["Persévérant","Persévérante","Persistent"],["Audacieux","Audacieuse","Bold"],["Minutieux","Minutieuse","Meticulous"],["Agile","Agile","Agile"],["Bricoleur","Bricoleuse","Handy"],["Éveillé","Éveillée","Bright"],["Appliqué","Appliquée","Diligent"],["Costaud","Costaude","Sturdy"]];
+function totemDe(n, a) {
+  const N = TOTEM_NOUNS[n], A = TOTEM_ADJ[a];
+  if (!N || !A) return null;
+  return { emoji: N[0], nom: `${N[1]} ${N[3] === "f" ? A[1] : A[0]}` };
+}
+
+const TYPES = {
+  signes: ["🩺", "Signes vitaux"], parole: ["💬", "Ce qu'on vous dit"], observation: ["👀", "Observation"],
+  resultat: ["🧪", "Résultat"], dossier: ["📋", "Dossier et médication"],
+};
+const PROG = { pab: ["PAB", "pab"], sasi: ["SASI", "sasi"], "les deux": ["PAB et SASI", "deux"] };
+
+/* Jauge « État du patient » : 0 à 100, départ à 60. */
+const JAUGE_DEPART = 60;
+function variation(pct) { return pct >= 70 ? 12 : pct >= 40 ? 4 : -12; }
+function etiquette(v) {
+  if (v < 25) return ["Critique", "e-crit", "#D42A1C"];
+  if (v < 50) return ["Préoccupant", "e-preo", "#BF831A"];
+  if (v < 75) return ["Stable", "e-stab", "#3F7A8A"];
+  return ["En voie d'amélioration", "e-amel", "#2E8B57"];
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const melanger = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const lire = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+const ecrire = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const pluriel = (n, mot, pl) => `${n} ${n > 1 ? (pl || mot + "s") : mot}`;
+
+/* ------------------------------------------------------------------ état */
+const S = {
+  ecran: "config",
+  cfg: Object.assign({ cas: CAS[0]?.id, duree: 30, filtre: "tous" }, lire("enquete_cfg", {})),
+  joues: new Set(),        // cas déjà joués pendant cette séance
+  nip: null, canal: null, hid: Math.random().toString(36).slice(2, 10), seq: 0,
+  joueurs: new Map(),      // id → { n, a }
+  cas: null,               // cas préparé (choix mélangés)
+  phase: "lobby",          // lobby · dossier · hypothese · hypoFin · indice · decision · resultat · denouement · entracte · ferme
+  e: -1,                   // étape courante
+  t0: 0, dureeV: 30, minuterie: null, pouls: null, anim: [], suspense: false,
+  votesHypo: new Map(),    // id → indice d'hypothèse (secret jusqu'au dénouement)
+  votes: new Map(),        // id → choix pour la décision en cours
+  jauge: JAUGE_DEPART, jaugeVue: JAUGE_DEPART,
+  bilan: [],               // par étape : { comptes, bons, total, pct, delta, justes, votants }
+};
+if (!CAS.some((c) => c.id === S.cfg.cas)) S.cfg.cas = CAS[0]?.id;
+
+/* Prépare un cas : mélange hypothèses et choix (la bonne réponse n'est jamais toujours au même endroit). */
+function preparer(c) {
+  const hyp = melanger(c.hypotheses);
+  return {
+    id: c.id, titre: c.titre, programme: c.programme, patient: c.patient, ouverture: c.ouverture, denouement: c.denouement,
+    hyp: hyp.map((h) => h.texte), hypBon: hyp.findIndex((h) => h.bonne),
+    etapes: c.etapes.map((e) => {
+      const ch = melanger(e.choix);
+      return { indice: e.indice, question: e.question, choix: ch.map((x) => x.texte), bon: ch.findIndex((x) => x.bonne), suite: e.suite, explication: e.explication };
+    }),
+  };
+}
+
+/* ---------------------------------------------------------- temps réel */
+async function ouvrirCanal() {
+  S.nip = String(Math.floor(1000 + Math.random() * 9000));
+  S.canal = supabase.channel("enquete-" + S.nip, { config: { broadcast: { self: false } } });
+  S.canal
+    .on("broadcast", { event: "rejoindre" }, ({ payload }) => recevoirJoueur(payload))
+    .on("broadcast", { event: "vote" }, ({ payload }) => recevoirVote(payload));
+  await new Promise((ok) => S.canal.subscribe((s) => { if (s === "SUBSCRIBED") ok(); }));
+  clearInterval(S.pouls);
+  S.pouls = setInterval(diffuser, 1500);   // battement : rattrape les retardataires et les messages perdus
+  diffuser();
+}
+function recevoirJoueur(p) {
+  if (!p || typeof p.id !== "string" || p.id.length > 20) return;
+  const n = Number(p.n), a = Number(p.a);
+  if (!totemDe(n, a)) return;
+  const j = S.joueurs.get(p.id);
+  if (j) { j.n = n; j.a = a; } else S.joueurs.set(p.id, { n, a });
+  diffuser();
+  if (S.phase === "lobby" && S.ecran === "partie") rendre();
+  else if (S.ecran === "config") majGroupe();
+  else rendreCompteVotes();
+}
+function recevoirVote(p) {
+  if (!p || !S.joueurs.has(p.id)) return;
+  const c = Number(p.c);
+  if (S.phase === "hypothese" && p.k === "h") {
+    if (S.votesHypo.has(p.id)) return;                           // la première réponse compte
+    if (!Number.isInteger(c) || c < 0 || c >= S.cas.hyp.length) return;
+    S.votesHypo.set(p.id, c);
+    diffuser(); rendreCompteVotes();
+    if (S.votesHypo.size >= S.joueurs.size) fermerVote();
+  } else if (S.phase === "decision" && p.k === S.e) {
+    if (S.votes.has(p.id)) return;
+    if (!Number.isInteger(c) || c < 0 || c >= S.cas.etapes[S.e].choix.length) return;
+    S.votes.set(p.id, c);
+    diffuser(); rendreCompteVotes();
+    if (S.votes.size >= S.joueurs.size) fermerVote();
+  }
+}
+function etatPublic() {
+  const e = { hid: S.hid, seq: ++S.seq, phase: S.phase, inscrits: [...S.joueurs.keys()] };
+  if (!S.cas || ["lobby", "entracte", "ferme"].includes(S.phase)) {
+    if (S.cas && S.phase === "lobby") e.titre = S.cas.titre;
+    return e;
+  }
+  const C = S.cas;
+  e.titre = C.titre; e.total = C.etapes.length;
+  e.jauge = S.phase === "denouement" && S.suspense ? null : S.jauge;
+  e.patient = C.patient;
+  if (["dossier", "hypothese", "hypoFin"].includes(S.phase)) e.ouverture = C.ouverture;
+  if (S.phase === "hypothese") {
+    e.v = { cle: "h", texte: "Quelle est ton hypothèse de départ ?", choix: C.hyp, duree: S.dureeV * 1000, restant: restant() };
+    e.repondu = [...S.votesHypo.keys()];
+  }
+  if (S.phase === "hypoFin") { e.nbHypo = S.votesHypo.size; e.aVote = [...S.votesHypo.keys()]; }
+  if (["indice", "decision", "resultat"].includes(S.phase)) { e.e = S.e; e.indice = C.etapes[S.e].indice; }
+  if (S.phase === "decision") {
+    const et = C.etapes[S.e];
+    e.v = { cle: S.e, texte: et.question, choix: et.choix, duree: S.dureeV * 1000, restant: restant() };
+    e.repondu = [...S.votes.keys()];
+  }
+  if (S.phase === "resultat") {
+    const et = C.etapes[S.e], b = S.bilan[S.e];
+    e.r = { texte: et.question, choix: et.choix, bon: et.bon, comptes: b.comptes, pct: b.pct, delta: b.delta, suite: et.suite };
+    e.justes = b.justes; e.votants = b.votants;
+  }
+  if (S.phase === "denouement") {
+    e.suspense = S.suspense;
+    if (!S.suspense) {
+      const comptes = C.hyp.map((_, k) => [...S.votesHypo.values()].filter((x) => x === k).length);
+      e.d = { titre: C.denouement.titre, texte: C.denouement.texte, aRetenir: C.denouement.aRetenir,
+        hyp: C.hyp.map((t, k) => ({ texte: t, n: comptes[k], bonne: k === C.hypBon })), nbHypo: S.votesHypo.size, nbJustes: comptes[C.hypBon] };
+      e.hypoJustes = [...S.votesHypo.entries()].filter(([, x]) => x === C.hypBon).map(([id]) => id);
+      e.aVote = [...S.votesHypo.keys()];
+    }
+  }
+  return e;
+}
+function diffuser() {
+  if (!S.canal) return;
+  S.canal.send({ type: "broadcast", event: "etat", payload: etatPublic() });
+}
+const restant = () => Math.max(0, S.dureeV * 1000 - (performance.now() - S.t0));
+
+/* ------------------------------------------------------------ partie */
+async function creerEnquete() {
+  const brut = CAS.find((c) => c.id === S.cfg.cas);
+  if (!brut) return;
+  ecrire("enquete_cfg", S.cfg);
+  S.cas = preparer(brut);
+  S.e = -1; S.votesHypo = new Map(); S.votes = new Map(); S.bilan = [];
+  S.jauge = JAUGE_DEPART; S.jaugeVue = JAUGE_DEPART; S.suspense = false;
+  if (!S.canal) await ouvrirCanal();
+  S.phase = "lobby"; S.ecran = "partie";
+  diffuser(); rendre();
+}
+function aller(phase) { arreterAnimation(); S.phase = phase; diffuser(); rendre(); }
+function ouvrirVote(phase) {
+  S.phase = phase; S.t0 = performance.now(); S.dureeV = S.cfg.duree;
+  if (phase === "decision") S.votes = new Map();
+  clearInterval(S.minuterie);
+  S.minuterie = setInterval(() => {
+    const r = Math.ceil(restant() / 1000);
+    const el = document.getElementById("chrono");
+    if (el) { el.textContent = Math.max(0, r); if (r <= 5) el.classList.add("fin"); }
+    if (r <= 0) fermerVote();
+  }, 200);
+  diffuser(); rendre();
+}
+function fermerVote() {
+  if (S.phase !== "hypothese" && S.phase !== "decision") return;
+  clearInterval(S.minuterie);
+  if (S.phase === "hypothese") { S.phase = "hypoFin"; diffuser(); rendre(); return; }
+  const et = S.cas.etapes[S.e];
+  const comptes = et.choix.map((_, k) => [...S.votes.values()].filter((x) => x === k).length);
+  const total = S.votes.size, bons = comptes[et.bon];
+  const pct = total ? Math.round((bons / total) * 100) : 0;
+  const delta = variation(pct);
+  S.bilan[S.e] = {
+    comptes, bons, total, pct, delta,
+    justes: [...S.votes.entries()].filter(([, x]) => x === et.bon).map(([id]) => id),
+    votants: [...S.votes.keys()],
+  };
+  S.jauge = Math.max(0, Math.min(100, S.jauge + delta));
+  S.phase = "resultat"; diffuser(); rendre();
+}
+function suivant() {
+  if (S.phase === "lobby") { if (S.joueurs.size) aller("dossier"); }
+  else if (S.phase === "dossier") ouvrirVote("hypothese");
+  else if (S.phase === "hypothese" || S.phase === "decision") fermerVote();
+  else if (S.phase === "hypoFin") { S.e = 0; aller("indice"); }
+  else if (S.phase === "indice") ouvrirVote("decision");
+  else if (S.phase === "resultat") {
+    if (S.e + 1 < S.cas.etapes.length) { S.e++; aller("indice"); }
+    else { S.phase = "denouement"; rendre(); }        // rendreDenouement diffuse lui-même (suspense)
+  }
+}
+function arreterAnimation() { S.anim.forEach(clearTimeout); S.anim = []; S.suspense = false; }
+function autreCas() {
+  arreterAnimation(); clearInterval(S.minuterie);
+  if (S.cas && S.phase === "denouement") S.joues.add(S.cas.id);   // « Changer de cas » depuis la salle ne compte pas
+  const suivantNonJoue = CAS.find((c) => !S.joues.has(c.id) && filtreOk(c));
+  if (suivantNonJoue) S.cfg.cas = suivantNonJoue.id;
+  S.cas = null; S.ecran = "config"; S.phase = "entracte"; diffuser(); rendre();
+}
+async function quitter() {
+  arreterAnimation(); clearInterval(S.minuterie);
+  if (S.canal) {
+    S.phase = "ferme"; S.cas = null;
+    for (let k = 0; k < 3; k++) { diffuser(); await new Promise((r) => setTimeout(r, 250)); }   // les téléphones affichent « terminé »
+    clearInterval(S.pouls);
+    try { await supabase.removeChannel(S.canal); } catch {}
+  }
+  clearInterval(S.pouls);
+  S.canal = null; S.nip = null; S.joueurs.clear(); S.joues.clear(); S.cas = null;
+  S.ecran = "config"; S.phase = "lobby"; rendre();
+}
+
+/* ------------------------------------------------------------ rendu */
+const $app = document.getElementById("app");
+const entete = (droite = "") => `
+  <div class="top">
+    <div class="marque"><span class="mk">🔎</span><span>Enquête clinique<small>QUEST · ESPACE ENSEIGNANT</small></span></div>
+    <div>${droite}</div>
+  </div>`;
+
+function rendre() {
+  if (S.ecran === "config") return rendreConfig();
+  const f = { lobby: rendreSalle, dossier: rendreDossier, hypothese: rendreHypothese, hypoFin: rendreHypoFin,
+    indice: rendreIndice, decision: rendreDecision, resultat: rendreResultat, denouement: rendreDenouement }[S.phase];
+  if (f) f();
+}
+
+function filtreOk(c) { const f = S.cfg.filtre; return f === "tous" || c.programme === f || c.programme === "les deux"; }
+function rendreConfig() {
+  const c = S.cfg;
+  const seg = (cle, vals, fmt) => `<div class="segs">${vals.map((v) => `<button data-seg="${cle}" data-val="${v}" class="${String(c[cle]) === String(v) ? "on" : ""}">${fmt ? fmt(v) : v}</button>`).join("")}</div>`;
+  const liste = CAS.filter(filtreOk);
+  if (liste.length && !liste.some((k) => k.id === c.cas)) c.cas = liste[0].id;
+  const lignes = liste.map((k) => {
+    const [plbl, pcls] = PROG[k.programme] || [k.programme, ""];
+    return `<button data-cas="${esc(k.id)}" class="${k.id === c.cas ? "on" : ""}"><span class="titre">${esc(k.titre)}<small>${esc(k.patient.milieu)} · ${pluriel(k.etapes.length, "indice")} · ${esc(k.duree || "")}</small></span>`
+      + `${S.joues.has(k.id) ? `<span class="badge joue">✓ joué</span>` : ""}<span class="badge ${pcls}">${plbl}</span></button>`;
+  }).join("");
+  const groupe = S.canal ? `<div class="groupe" id="groupe"></div>` : "";
+  $app.innerHTML = `${entete(S.canal ? `<button class="discret" id="quitter">Terminer la séance</button>` : `<a class="btn sec" href="./" style="text-decoration:none">← Tableau de bord</a>`)}
+  <div class="config">
+    <div class="carte">
+      ${groupe}
+      <div class="sur">${S.canal ? "Prochain cas" : "Nouvelle enquête"}</div>
+      <h1>Choisir un cas</h1>
+      <p class="muted" style="margin:0">Toute la classe enquête ensemble, sur son téléphone. Pas de points, pas de classement. Rien n'est enregistré.</p>
+      <label class="champ">Programme</label>${seg("filtre", ["tous", "pab", "sasi"], (v) => ({ tous: "Tous les cas", pab: "PAB", sasi: "SASI" })[v])}
+      <label class="champ">Cas clinique</label>
+      <div class="cas">${lignes || `<div class="vide">Aucun cas.</div>`}</div>
+      <label class="champ">Temps de vote</label>${seg("duree", [20, 30, 45], (v) => v + " s")}
+      <div class="resume" id="resume"></div>
+      <div style="margin-top:22px"><button class="btn" id="creer" ${liste.length ? "" : "disabled"}>${S.canal ? "Ouvrir ce cas avec le même groupe →" : "Créer l'enquête →"}</button></div>
+    </div>
+    <div class="carte">
+      <div class="sur">Comment ça marche</div>
+      <ol class="etapes" style="padding-left:20px;margin:16px 0 0">
+        <li><b>Projetez cette page.</b> Un code à 4 chiffres et un QR code s'affichent. Les élèves vont sur <b>questedu.ca/enquete</b> et reçoivent un totem : aucun nom, aucun compte.</li>
+        <li><b>Le dossier d'ouverture</b> présente le patient. Chaque élève choisit une <b>hypothèse de départ</b>, qui reste secrète jusqu'à la fin.</li>
+        <li><b>Les indices</b> se dévoilent un à un. Après chacun, la classe vote : <b>« Que faites-vous maintenant ? »</b> On voit ensuite la répartition, la bonne conduite et la suite de l'histoire. C'est le moment d'en discuter.</li>
+        <li><b>La jauge « État du patient »</b> monte ou descend selon le pourcentage de bonnes décisions de la classe.</li>
+        <li><b>Le dénouement</b> révèle ce qui se passait, combien avaient vu juste dès le départ, et 3 points à retenir.</li>
+      </ol>
+      <p class="muted" style="font-size:14px;margin:6px 0 0">Télécommande : → , Espace ou Entrée pour passer à l'étape suivante.</p>
+    </div>
+  </div>`;
+  const k = CAS.find((x) => x.id === c.cas);
+  const res = document.getElementById("resume");
+  if (k && res) res.innerHTML = `<b>${esc(k.titre)}</b> — ${esc(k.patient.nom)}, ${k.patient.age} ans · ${pluriel(k.etapes.length, "indice")}, ${pluriel(k.etapes.length, "décision")} · environ ${esc(k.duree || "15 min")}.`;
+  majGroupe();
+  $app.querySelectorAll("[data-cas]").forEach((b) => b.addEventListener("click", () => { S.cfg.cas = b.dataset.cas; rendre(); }));
+  $app.querySelectorAll("[data-seg]").forEach((b) => b.addEventListener("click", () => {
+    const k2 = b.dataset.seg; const v = b.dataset.val; S.cfg[k2] = /^\d+$/.test(v) ? Number(v) : v; rendre();
+  }));
+  const cr = $app.querySelector("#creer"); if (cr) cr.addEventListener("click", () => { cr.disabled = true; cr.textContent = "Connexion…"; creerEnquete(); });
+  const q = $app.querySelector("#quitter"); if (q) q.addEventListener("click", quitter);
+}
+function majGroupe() {
+  const g = document.getElementById("groupe");
+  if (g) g.innerHTML = `<span>👥 Même groupe : ${pluriel(S.joueurs.size, "joueur")} · code ${S.nip}</span><span style="font-weight:400">Les téléphones attendent le prochain cas.</span>`;
+}
+
+function qrSvg(texte) {
+  try { const q = qrcode(0, "M"); q.addData(texte); q.make(); return q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); } catch { return ""; }
+}
+function rendreSalle() {
+  const lien = `${URL_JOUEUR}?pin=${S.nip}`;
+  const tot = [...S.joueurs.values()].map((j) => totemDe(j.n, j.a)).map((t) => `<span class="totem">${t.emoji} ${esc(t.nom)}</span>`).join("");
+  const [plbl, pcls] = PROG[S.cas.programme] || ["", ""];
+  $app.innerHTML = `${entete(`<button class="discret" id="retour">← Changer de cas</button>`)}
+  <div class="salle">
+    <div class="carte rejoindre">
+      <div class="sur">Rejoignez l'enquête</div>
+      <div class="qr">${qrSvg(lien)}</div>
+      <div class="url">questedu.ca/enquete</div>
+      <div class="muted">Code de la partie</div>
+      <div class="nip">${S.nip}</div>
+    </div>
+    <div class="carte joueurs">
+      <div class="sur">Cas · ${esc(S.cas.titre)} <span class="badge ${pcls}" style="letter-spacing:0;vertical-align:middle">${plbl}</span></div>
+      <div style="display:flex;align-items:baseline;gap:14px;margin-top:8px">
+        <span class="compte">${S.joueurs.size}</span><span style="font-size:22px;font-weight:700">enquêteur${S.joueurs.size > 1 ? "s" : ""} dans l'équipe</span>
+      </div>
+      ${S.joueurs.size ? `<div class="totems">${tot}</div>` : `<div class="vide">En attente des premiers enquêteurs…</div>`}
+      <div class="bas"><span class="muted">Les retardataires peuvent se joindre en cours de partie.</span>
+        <button class="btn" id="go" ${S.joueurs.size ? "" : "disabled"}>Ouvrir le dossier →</button></div>
+    </div>
+  </div>`;
+  $app.querySelector("#go").addEventListener("click", suivant);
+  $app.querySelector("#retour").addEventListener("click", autreCas);
+}
+
+/* Bandeau permanent : patient + jauge « État du patient ». */
+function bandeau() {
+  const p = S.cas.patient;
+  const [lbl, cls] = etiquette(S.jaugeVue);
+  return `<div class="carte bandeau">
+    <div class="pat"><span class="ic">👤</span><span><b>${esc(p.nom)}, ${p.age} ans</b><span>${esc(p.milieu)}</span></span></div>
+    <div class="jauge"><span class="lbl">État du patient</span>
+      <div class="piste"><div class="rempli" id="jRempli" style="width:${S.jaugeVue}%;background:${etiquette(S.jaugeVue)[2]}"></div></div>
+      <span class="val" id="jVal">${S.jaugeVue}</span><span class="etiq ${cls}" id="jEtiq">${lbl}</span><span id="jDelta"></span>
+    </div>
+  </div>`;
+}
+/* Anime la jauge de la valeur affichée vers la valeur réelle. */
+function animerJauge(delai = 0) {
+  if (S.jaugeVue === S.jauge) return;
+  const de = S.jaugeVue, vers = S.jauge;
+  S.jaugeVue = vers;
+  S.anim.push(setTimeout(() => {
+    const r = document.getElementById("jRempli"), v = document.getElementById("jVal"), et = document.getElementById("jEtiq");
+    if (!r) return;
+    const [lbl, cls, coul] = etiquette(vers);
+    r.style.width = vers + "%"; r.style.background = coul;
+    et.className = "etiq " + cls; et.textContent = lbl;
+    const t0 = performance.now();
+    (function compter(t) {
+      const k = Math.min(1, (t - t0) / 1400);
+      v.textContent = Math.round(de + (vers - de) * k);
+      if (k < 1 && v.isConnected) requestAnimationFrame(compter);
+    })(t0);
+  }, delai));
+}
+function blocDossier(petit) {
+  const p = S.cas.patient;
+  return `<div class="carte dossier ${petit ? "petit" : ""}">
+    <div class="sur">📁 Dossier d'ouverture</div>
+    <div class="ligne1"><span class="nom">${esc(p.nom)}</span><span class="meta">${p.age} ans · ${esc(p.milieu)}</span></div>
+    <p>${esc(S.cas.ouverture)}</p>
+  </div>`;
+}
+function blocIndice(petit) {
+  const et = S.cas.etapes[S.e]; const [ico, lbl] = TYPES[et.indice.type] || ["🔎", "Indice"];
+  return `<div class="carte indice t-${esc(et.indice.type)} ${petit ? "petit" : ""}"><span class="ico">${ico}</span>
+    <div><div class="type">Indice ${S.e + 1} · ${lbl}</div><p>${esc(et.indice.texte)}</p></div></div>`;
+}
+
+function rendreDossier() {
+  $app.innerHTML = `${entete(`<button class="discret" id="quitter">Terminer</button>`)}${bandeau()}
+  ${blocDossier(false)}
+  <div class="bas"><span class="muted">Lisez le dossier ensemble. Ensuite, chacun formule son hypothèse en secret.</span>
+    <button class="btn" id="go">Les hypothèses →</button></div>`;
+  $app.querySelector("#go").addEventListener("click", suivant);
+  $app.querySelector("#quitter").addEventListener("click", quitter);
+}
+function rendreHypothese() {
+  const r = Math.ceil(restant() / 1000);
+  $app.innerHTML = `${entete(`<button class="discret" id="stop">Arrêter le vote</button>`)}${bandeau()}
+  ${blocDossier(true)}
+  <div class="qhaut"><div class="enonce">Quelle est votre hypothèse de départ ? <span class="muted" style="font-size:22px">🔒 secrète jusqu'au dénouement</span></div><div class="chrono" id="chrono">${Math.max(0, r)}</div></div>
+  <div class="choix">${S.cas.hyp.map((t, k) => `<div class="ch c${k}"><span class="lettre">${"ABCD"[k]}</span><span>${esc(t)}</span></div>`).join("")}</div>
+  <div class="reponses" id="nbrep"></div>`;
+  rendreCompteVotes();
+  $app.querySelector("#stop").addEventListener("click", fermerVote);
+}
+function rendreHypoFin() {
+  const n = S.votesHypo.size;
+  $app.innerHTML = `${entete(`<button class="discret" id="quitter">Terminer</button>`)}${bandeau()}
+  <div class="carte secret"><div class="gros">🔒</div>
+    <div class="compte">${n}</div>
+    <div style="font-size:28px;font-weight:700">hypothèse${n > 1 ? "s" : ""} reçue${n > 1 ? "s" : ""}</div>
+    <p class="muted" style="font-size:20px">Elles restent secrètes jusqu'au dénouement. Place aux indices !</p></div>
+  <div class="bas"><span></span><button class="btn" id="go">Premier indice →</button></div>`;
+  $app.querySelector("#go").addEventListener("click", suivant);
+  $app.querySelector("#quitter").addEventListener("click", quitter);
+}
+function rendreIndice() {
+  $app.innerHTML = `${entete(`<button class="discret" id="quitter">Terminer</button>`)}${bandeau()}
+  <div class="qnum" style="margin-bottom:12px">Indice ${S.e + 1} sur ${S.cas.etapes.length}</div>
+  ${blocIndice(false)}
+  <div class="bas"><span class="muted">Prenez un moment pour observer. Qu'est-ce que cet indice vous apprend ?</span>
+    <button class="btn" id="go">Que faites-vous ? Voter →</button></div>`;
+  $app.querySelector("#go").addEventListener("click", suivant);
+  $app.querySelector("#quitter").addEventListener("click", quitter);
+}
+function rendreDecision() {
+  const et = S.cas.etapes[S.e]; const r = Math.ceil(restant() / 1000);
+  $app.innerHTML = `${entete(`<button class="discret" id="stop">Arrêter le vote</button>`)}${bandeau()}
+  ${blocIndice(true)}
+  <div class="qhaut"><div class="enonce">${esc(et.question)}</div><div class="chrono" id="chrono">${Math.max(0, r)}</div></div>
+  <div class="choix">${et.choix.map((t, k) => `<div class="ch c${k}"><span class="lettre">${"ABCD"[k]}</span><span>${esc(t)}</span></div>`).join("")}</div>
+  <div class="reponses" id="nbrep"></div>`;
+  rendreCompteVotes();
+  $app.querySelector("#stop").addEventListener("click", fermerVote);
+}
+function rendreCompteVotes() {
+  const el = document.getElementById("nbrep");
+  if (!el) return;
+  if (S.phase === "hypothese") { const n = S.votesHypo.size; el.textContent = `${n} hypothèse${n > 1 ? "s" : ""} reçue${n > 1 ? "s" : ""} sur ${S.joueurs.size}`; }
+  else if (S.phase === "decision") el.textContent = `${pluriel(S.votes.size, "vote")} sur ${S.joueurs.size}`;
+}
+function rendreResultat() {
+  const et = S.cas.etapes[S.e], b = S.bilan[S.e];
+  const max = Math.max(1, ...b.comptes);
+  const dernier = S.e + 1 >= S.cas.etapes.length;
+  const sens = b.delta > 0 ? (b.delta >= 10 ? "mont" : "stab") : "desc";
+  const msg = b.total === 0 ? "Aucun vote : le patient attend…" : `${b.pct} % de bonnes décisions`;
+  $app.innerHTML = `${entete(`<button class="discret" id="quitter">Terminer</button>`)}${bandeau()}
+  <div class="qhaut"><span class="qnum">Décision ${S.e + 1} sur ${S.cas.etapes.length} · ${msg}</span></div>
+  <div class="enonce" style="font-size:26px;margin:12px 0 18px">${esc(et.question)}</div>
+  <div class="choix">${et.choix.map((t, k) => `<div class="ch c${k} ${k === et.bon ? "bon" : "pale"}"><span class="lettre">${k === et.bon ? "✓" : "ABCD"[k]}</span><span>${esc(t)}</span><span class="n">${b.comptes[k]}</span><span class="barre" style="width:${(b.comptes[k] / max) * 100}%"></span></div>`).join("")}</div>
+  <div class="boites">
+    <div class="boite suite"><b>La suite de l'histoire</b>${esc(et.suite)}</div>
+    <div class="boite pq"><b>Pourquoi ?</b>${esc(et.explication)}</div>
+  </div>
+  <div class="bas"><span></span><button class="btn" id="go">${dernier ? "Le dénouement 🔎" : "Indice suivant →"}</button></div>`;
+  $app.querySelector("#go").addEventListener("click", suivant);
+  $app.querySelector("#quitter").addEventListener("click", quitter);
+  const d = document.getElementById("jDelta");
+  if (d) d.innerHTML = `<span class="delta ${sens}">${b.delta > 0 ? "+" : ""}${b.delta}</span>`;
+  animerJauge(700);
+}
+
+function rendreDenouement() {
+  arreterAnimation();
+  const C = S.cas, D = C.denouement;
+  const comptes = C.hyp.map((_, k) => [...S.votesHypo.values()].filter((x) => x === k).length);
+  const nb = S.votesHypo.size, justes = comptes[C.hypBon], max = Math.max(1, ...comptes);
+  const [lbl] = etiquette(S.jauge);
+  const anime = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const bilanDec = S.bilan.filter(Boolean);
+  const moy = bilanDec.length ? Math.round(bilanDec.reduce((s, b) => s + b.pct, 0) / bilanDec.length) : 0;
+  $app.innerHTML = `${entete(`<button class="btn sec" id="autre">Rejouer un autre cas avec le même groupe</button> <button class="discret" id="quitter">Terminer</button>`)}${bandeau()}
+  <div id="scene" class="${anime ? "cache cache2" : ""}">
+    <div class="carte revel">
+      <div class="avant" id="avant">${anime ? "🔎 Ce qui se passait vraiment…" : "Ce qui se passait vraiment"}</div>
+      <div class="devoile"><div class="diag">${esc(D.titre)}</div><div class="texte">${esc(D.texte)}</div></div>
+    </div>
+    <div class="fin3 devoile2">
+      <div class="carte">
+        <div class="sur">Les hypothèses de départ</div>
+        <p style="font-size:22px;font-weight:700;margin:10px 0 6px">${nb ? `${justes} enquêteur${justes > 1 ? "s" : ""} sur ${nb} avai${justes > 1 ? "en" : ""}t vu juste dès le départ.` : "Aucune hypothèse n'avait été formulée."}</p>
+        ${C.hyp.map((t, k) => `<div class="hyp ${k === C.hypBon ? "bonne" : ""}"><span class="nomh">${k === C.hypBon ? "✓ " : ""}${esc(t)}</span><span class="p"><div data-l="${(comptes[k] / max) * 100}" style="width:${anime ? 0 : (comptes[k] / max) * 100}%"></div></span><span class="n">${comptes[k]}</span></div>`).join("")}
+        <p class="muted" style="margin:14px 0 0">État final du patient : <b style="color:var(--encre)">${S.jauge}/100 · ${lbl}</b> · ${moy} % de bonnes décisions en moyenne.</p>
+      </div>
+      <div class="carte">
+        <div class="sur">3 points à retenir</div>
+        <ol class="retenir">${D.aRetenir.map((t) => `<li><b>${esc(t)}</b></li>`).join("")}</ol>
+      </div>
+    </div>
+  </div>`;
+  $app.querySelector("#autre").addEventListener("click", autreCas);
+  $app.querySelector("#quitter").addEventListener("click", quitter);
+  if (!anime) { S.suspense = false; diffuser(); return; }
+  // Dévoilement sobre : suspense, puis la réponse se précise, puis les hypothèses et les points à retenir.
+  S.suspense = true; diffuser();
+  const sc = document.getElementById("scene");
+  const etapes = [
+    [1800, () => { sc.classList.remove("cache"); const a = document.getElementById("avant"); if (a) a.textContent = "Ce qui se passait vraiment"; }],
+    [3000, () => { sc.classList.remove("cache2"); S.suspense = false; diffuser(); }],
+    [3300, () => sc.querySelectorAll("[data-l]").forEach((d) => (d.style.width = d.dataset.l + "%"))],
+  ];
+  S.anim = etapes.map(([ms, f]) => setTimeout(f, ms));
+}
+
+/* Raccourci clavier pour la télécommande de présentation : → , Espace ou Entrée = étape suivante. */
+document.addEventListener("keydown", (e) => {
+  if (S.ecran !== "partie" || !["ArrowRight", " ", "PageDown", "Enter"].includes(e.key)) return;
+  if (e.target && /INPUT|SELECT|TEXTAREA|BUTTON/.test(e.target.tagName)) return;
+  e.preventDefault();
+  suivant();
+});
+window.addEventListener("beforeunload", (e) => { if (S.canal && S.joueurs.size && S.phase !== "denouement") { e.preventDefault(); e.returnValue = ""; } });
+
+/* Accès pour les tests automatisés (aucun effet en classe). */
+window.__enquete = { S, suivant, fermerVote, autreCas, quitter, creerEnquete };
+
+if (!CAS.length) $app.innerHTML = `<div class="vide">Les cas n'ont pas pu être chargés (enquetes.js).</div>`;
+else rendre();
+</script>
+</body>
+</html>

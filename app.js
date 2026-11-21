@@ -1709,6 +1709,7 @@ function shell(crumbs, body) {
       ${cache.classe && msgVisible() ? `<button class="nav ${cache.view==='messages'?'on':''}" data-nav="messages">📬 Messages</button>` : ""}
       <div class="navlbl">En classe</div>
       <a class="nav" href="defi.html" target="_blank" rel="noopener" style="text-decoration:none">🎯 Défi en direct</a>
+      <a class="nav" href="enquete.html" target="_blank" rel="noopener" style="text-decoration:none">🔎 Enquête clinique</a>
       ${who}
     </aside>
     <div class="main">
